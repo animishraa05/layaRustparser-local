@@ -497,3 +497,247 @@ fn scorecard_duel_section_runs_when_fixtures_present() {
 
     std::fs::remove_dir_all(&tmp).ok();
 }
+
+/// #5: `prove --help` must parse in debug builds (same duplicate-short-flag
+/// class that bit evaluate/benchmark — ProveArgs once shipped `-l` twice).
+#[test]
+fn prove_help_parses_in_debug_build() {
+    let out = Command::new(bin())
+        .args(["prove", "--help"])
+        .output()
+        .expect("spawn ulpf prove --help");
+    assert!(
+        out.status.success(),
+        "prove --help failed (exit {:?}): {}",
+        out.status.code(),
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+/// #5: leaf 342 of the known-good block proves against the anchored ledger
+/// root — pure JSON on stdout, exit 0, field names matching the serve API.
+#[test]
+fn prove_valid_leaf_exits_zero_with_verified_true() {
+    let out = Command::new(bin())
+        .args([
+            "prove",
+            "--file",
+            fixture("data/parquet/block_00001.parquet")
+                .to_str()
+                .unwrap(),
+            "--leaf",
+            "342",
+            "--ledger",
+            fixture("data/ledger.jsonl").to_str().unwrap(),
+        ])
+        .output()
+        .expect("spawn ulpf prove (valid)");
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "valid leaf must exit 0, got {:?}: {}",
+        out.status.code(),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let proof: serde_json::Value = serde_json::from_slice(&out.stdout)
+        .expect("prove stdout must be pure JSON");
+    assert_eq!(proof.get("block_id").and_then(|v| v.as_u64()), Some(1));
+    assert_eq!(proof.get("leaf_index").and_then(|v| v.as_u64()), Some(342));
+    assert_eq!(proof.get("tree_size").and_then(|v| v.as_u64()), Some(1000));
+    assert_eq!(proof.get("verified"), Some(&serde_json::Value::Bool(true)));
+    assert_eq!(
+        proof.get("ledger_merkle_root"),
+        proof.get("calculated_merkle_root"),
+        "clean block: recomputed root must equal the anchored root"
+    );
+    assert_eq!(
+        proof.get("standard").and_then(|v| v.as_str()),
+        Some("RFC 6962 Certificate Transparency Standard")
+    );
+    assert!(proof.get("audit_path").and_then(|v| v.as_array()).is_some());
+}
+
+/// #5: the deliberately tampered block still prints full JSON but exits 2
+/// with verified:false — the proof is anchored on the ledger root, so a
+/// recomputed-from-tampered-bytes tree cannot self-verify.
+#[test]
+fn prove_tampered_block_exits_two_with_verified_false() {
+    let out = Command::new(bin())
+        .args([
+            "prove",
+            "--file",
+            fixture("data/parquet/block_00000.parquet")
+                .to_str()
+                .unwrap(),
+            "--leaf",
+            "0",
+            "--ledger",
+            fixture("data/ledger.jsonl").to_str().unwrap(),
+        ])
+        .output()
+        .expect("spawn ulpf prove (tampered)");
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "unverifiable leaf must exit 2, got {:?}",
+        out.status.code()
+    );
+    let proof: serde_json::Value = serde_json::from_slice(&out.stdout)
+        .expect("exit-2 prove must still print full JSON");
+    assert_eq!(proof.get("verified"), Some(&serde_json::Value::Bool(false)));
+    assert!(proof.get("ledger_merkle_root").and_then(|v| v.as_str()).is_some());
+}
+
+/// #5: an out-of-bounds leaf is a usage error (exit 1), not a verdict.
+#[test]
+fn prove_leaf_out_of_bounds_exits_one() {
+    let out = Command::new(bin())
+        .args([
+            "prove",
+            "--file",
+            fixture("data/parquet/block_00001.parquet")
+                .to_str()
+                .unwrap(),
+            "--leaf",
+            "1000",
+            "--ledger",
+            fixture("data/ledger.jsonl").to_str().unwrap(),
+        ])
+        .output()
+        .expect("spawn ulpf prove (oob)");
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "OOB leaf must exit 1, got {:?}",
+        out.status.code()
+    );
+}
+
+/// #5: the tracked ledger names 50 blocks but only 2 Parquet files exist —
+/// and block 0 is tampered — so the cumulative audit must fail loudly
+/// (exit 2), never report a clean chain (exit 0).
+#[test]
+fn verify_consistency_on_tracked_fixtures_is_not_clean() {
+    let out = Command::new(bin())
+        .args([
+            "verify",
+            "--consistency",
+            "--ledger",
+            fixture("data/ledger.jsonl").to_str().unwrap(),
+        ])
+        .output()
+        .expect("spawn ulpf verify --consistency");
+    assert_ne!(
+        out.status.code(),
+        Some(0),
+        "tracked fixtures (tampered block 0 + 48 missing files) must not exit 0"
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("Pairs checked:"),
+        "summary line missing:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("Skipped (missing files):"),
+        "skip count missing:\n{stdout}"
+    );
+}
+
+/// #5: end-to-end consistency on a scratch dataset. Ingest 12 lines with a
+/// batch size of 5 (blocks of 5/5/2 via the SIGTERM tail flush), then the
+/// cumulative audit must exit 0 with 2/2 pairs passing.
+#[test]
+fn verify_consistency_on_scratch_dataset_passes() {
+    let tmp = std::env::temp_dir().join(format!(
+        "ulpf_consist_{}_{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let parquet = tmp.join("parquet");
+    let ledger = tmp.join("ledger.jsonl");
+    std::fs::create_dir_all(&parquet).unwrap();
+
+    let udp = "127.0.0.1:51412";
+    let tcp = "127.0.0.1:51413";
+
+    let mut child = Command::new(bin())
+        .args([
+            "ingest",
+            "--udp",
+            udp,
+            "--tcp",
+            tcp,
+            "--parquet-dir",
+            parquet.to_str().unwrap(),
+            "--ledger",
+            ledger.to_str().unwrap(),
+            "--batch-size",
+            "5",
+            "--batch-timeout",
+            "60000",
+        ])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("spawn ulpf ingest");
+
+    std::thread::sleep(Duration::from_millis(700));
+
+    let sock = UdpSocket::bind("127.0.0.1:0").expect("bind test socket");
+    let line = "<134>Sep 24 10:00:00 cisco-asa %ASA-6-302013: Built inbound TCP connection \
+                1234 for outside:198.51.100.7/443 (198.51.100.7/443) to inside:10.1.2.3/51514 \
+                (10.1.2.3/51514)\n";
+    for _ in 0..12 {
+        sock.send_to(line.as_bytes(), udp).expect("udp send");
+    }
+    std::thread::sleep(Duration::from_millis(1500));
+
+    let st = Command::new("sh")
+        .arg("-c")
+        .arg(format!("kill -TERM {}", child.id()))
+        .status()
+        .expect("send SIGTERM");
+    assert!(st.success());
+
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        match child.try_wait().expect("try_wait") {
+            Some(status) => {
+                assert_eq!(status.code(), Some(0), "ingest must exit 0");
+                break;
+            }
+            None if std::time::Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(100))
+            }
+            None => {
+                let _ = child.kill();
+                panic!("ingest did not exit within 10s of SIGTERM");
+            }
+        }
+    }
+
+    let out = Command::new(bin())
+        .args([
+            "verify",
+            "--consistency",
+            "--ledger",
+            ledger.to_str().unwrap(),
+        ])
+        .output()
+        .expect("spawn ulpf verify --consistency (scratch)");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "clean scratch chain must exit 0:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("Pairs checked: 2"),
+        "expected 2 pairs (5/5/2 blocks):\n{stdout}"
+    );
+
+    std::fs::remove_dir_all(&tmp).ok();
+}
