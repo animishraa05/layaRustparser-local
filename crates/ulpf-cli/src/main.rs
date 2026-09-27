@@ -68,6 +68,8 @@ enum Commands {
     Scorecard(ScorecardArgs),
     /// Inspect forensic records inside an archived Parquet block
     Inspect(InspectArgs),
+    /// Prove a single leaf's inclusion in its block against the anchored ledger root (RFC 6962 audit path as JSON)
+    Prove(ProveArgs),
     /// Adversarial simulation: stealthily tamper with an archived Parquet record
     Tamper(TamperArgs),
     /// Launch the lightweight HTTP backend for UI and SIEM integration
@@ -87,6 +89,21 @@ struct TamperArgs {
     /// Spoofed IP address to inject into the raw log
     #[arg(short, long, default_value = "10.99.99.99")]
     ip: String,
+}
+
+#[derive(Args, Debug)]
+struct ProveArgs {
+    /// Path to the Parquet block file holding the leaf
+    #[arg(short, long)]
+    file: PathBuf,
+
+    /// Leaf index to prove
+    #[arg(short, long)]
+    leaf: usize,
+
+    /// Path to the append-only cryptographic Merkle ledger
+    #[arg(short, long, default_value = "data/ledger.jsonl")]
+    ledger: PathBuf,
 }
 
 #[derive(Args, Debug)]
@@ -169,13 +186,18 @@ struct IngestArgs {
 
 #[derive(Args, Debug)]
 struct VerifyArgs {
-    /// Path to the Parquet block file to audit
-    #[arg(short, long)]
-    file: PathBuf,
+    /// Path to the Parquet block file to audit (required unless --consistency)
+    #[arg(short, long, required_unless_present = "consistency")]
+    file: Option<PathBuf>,
 
     /// Path to the append-only cryptographic Merkle ledger
     #[arg(short, long, default_value = "data/ledger.jsonl")]
     ledger: PathBuf,
+
+    /// Walk the cumulative prefix chain instead of a single block: every
+    /// adjacent pair of anchored blocks must extend the same append-only log
+    #[arg(long, default_value_t = false)]
+    consistency: bool,
 }
 
 #[derive(Args, Debug)]
@@ -329,6 +351,7 @@ async fn main() -> Result<()> {
         Commands::Evaluate(args) => run_evaluate(args).await,
         Commands::Scorecard(args) => run_scorecard(args),
         Commands::Inspect(args) => run_inspect(args),
+        Commands::Prove(args) => run_prove(args),
         Commands::Tamper(args) => run_tamper(args),
         Commands::Serve(args) => serve::run_serve(args).await,
     }
@@ -640,12 +663,13 @@ async fn run_ingest(args: IngestArgs) -> Result<()> {
             let report_flush = |tag: &str, flush_res: &ulpf_integrity::batcher::BlockFlushResult| {
                 flush_blocks.fetch_add(1, Ordering::Relaxed);
                 info!(
-                    "\x1b[1;35m[MERKLE FLUSH{}]\x1b[0m Block #{} | Leaves: {} | Root: {}... | Saved: {}",
+                    "\x1b[1;35m[MERKLE FLUSH{}]\x1b[0m Block #{} | Leaves: {} | Root: {}... | Saved: {} | fsync: {} µs",
                     tag,
                     flush_res.block_id,
                     flush_res.leaf_count,
                     &flush_res.merkle_root.to_hex()[..16],
-                    flush_res.parquet_path.display()
+                    flush_res.parquet_path.display(),
+                    flush_res.fsync_micros,
                 );
             };
             loop {
@@ -918,6 +942,147 @@ async fn run_ingest(args: IngestArgs) -> Result<()> {
 // -----------------------------------------------------------------------------
 
 fn run_verify(args: VerifyArgs) -> Result<()> {
+    // Consistency mode takes the ledger, not a file: cumulative prefix
+    // chain over every anchored block. A lone --consistency with a --file
+    // is a confused invocation, not two audits — say so and exit 1.
+    if args.consistency {
+        if args.file.is_some() {
+            eprintln!(
+                "[ERROR] --file and --consistency are mutually exclusive: pass one audit target."
+            );
+            std::process::exit(1);
+        }
+        return run_consistency(&args.ledger);
+    }
+    let Some(file) = args.file else {
+        // Unreachable through clap (file is required_unless_present
+        // consistency), but a defensive exit 1 beats an unwrap panic if the
+        // attribute ever drifts from this dispatch.
+        eprintln!("[ERROR] --file is required unless --consistency is passed.");
+        std::process::exit(1);
+    };
+    run_verify_file(&file, &args.ledger)
+}
+
+/// Cumulative-chain audit: every adjacent pair of anchored blocks must
+/// extend one append-only log (RFC 6962 consistency proof over the running
+/// cumulative tree), and every walked block must match its ledger entry's
+/// row count and root. Exits: 0 all pairs pass, 2 any pair fails, 1 fewer
+/// than 2 blocks could be walked (nothing to chain).
+fn run_consistency(ledger: &std::path::Path) -> Result<()> {
+    println!(
+        "\x1b[1;36m====================================================================\x1b[0m"
+    );
+    println!(
+        "\x1b[1;32m           ULPF Cumulative Ledger Consistency Auditor             \x1b[0m"
+    );
+    println!(
+        "\x1b[1;36m====================================================================\x1b[0m"
+    );
+    println!("  Merkle Ledger : {}", ledger.display());
+    println!("  Standard      : RFC 6962 Certificate Transparency (consistency proofs)");
+    println!(
+        "\x1b[1;36m--------------------------------------------------------------------\x1b[0m"
+    );
+
+    if !ledger.exists() {
+        println!(
+            "\x1b[1;31m[ERROR] Cryptographic ledger file does not exist: {}\x1b[0m",
+            ledger.display()
+        );
+        std::process::exit(1);
+    }
+
+    let report = match ulpf_integrity::proof::check_ledger_consistency(ledger) {
+        Ok(r) => r,
+        Err(e) => {
+            println!("\x1b[1;31m[ERROR] Consistency audit failed to run: {}\x1b[0m", e);
+            std::process::exit(1);
+        }
+    };
+
+    if report.blocks_checked < 2 {
+        println!(
+            "\x1b[1;31m[ERROR] Only {} block(s) with existing Parquet files walked ({} skipped as missing): need at least 2 to chain.\x1b[0m",
+            report.blocks_checked, report.skipped_missing_files
+        );
+        std::process::exit(1);
+    }
+
+    println!("\n  {:>10} {:>10} {:>10} {:>10} {:>6} {:>6} {:>6}  {verdict}",
+        "prev", "curr", "prev_sz", "curr_sz", "rows", "roots", "proof", verdict = "verdict");
+    for pair in &report.pairs {
+        let mark = |ok: bool| if ok { "ok" } else { "FAIL" };
+        println!("  {:>10} {:>10} {:>10} {:>10} {:>6} {:>6} {:>6}  {}",
+            pair.prev_block,
+            pair.curr_block,
+            pair.prev_size,
+            pair.curr_size,
+            mark(pair.row_counts_match),
+            mark(pair.blocks_valid),
+            mark(pair.proof_valid),
+            if pair.passed { "\x1b[32mPASS\x1b[0m" } else { "\x1b[1;31mFAIL\x1b[0m" },
+        );
+    }
+
+    println!(
+        "\n  Pairs checked: {} | Pairs passed: {} | Blocks walked: {} | Skipped (missing files): {}",
+        report.pairs_checked, report.pairs_passed, report.blocks_checked, report.skipped_missing_files
+    );
+
+    if report.overall_valid {
+        println!(
+            "\n\x1b[1;42;37m   [PASS] CUMULATIVE CHAIN CONSISTENT: every block extends the same log   \x1b[0m"
+        );
+        Ok(())
+    } else {
+        println!("\n\x1b[1;41;37m   [ALARM] CONSISTENCY BREAK: the chain was rewritten or a block no longer matches its ledger entry   \x1b[0m");
+        // Same script contract as single-block verify: tamper verdicts exit 2.
+        std::process::exit(2);
+    }
+}
+
+/// Pure-JSON inclusion proof for one leaf, anchored on the ledger root.
+/// Stdout carries ONLY the pretty-printed proof object (pipe-safe);
+/// exits: 1 missing/unreadable input or out-of-bounds leaf, 2 the proof
+/// JSON printed but the leaf is not anchored (no entry or verified:false).
+fn run_prove(args: ProveArgs) -> Result<()> {
+    if !args.file.exists() {
+        eprintln!(
+            "[ERROR] Parquet block file does not exist: {}",
+            args.file.display()
+        );
+        std::process::exit(1);
+    }
+
+    if !args.ledger.exists() {
+        eprintln!(
+            "[ERROR] Cryptographic ledger file does not exist: {}",
+            args.ledger.display()
+        );
+        std::process::exit(1);
+    }
+
+    let outcome = match ulpf_integrity::proof::prove_leaf(&args.file, args.leaf, &args.ledger) {
+        Ok(o) => o,
+        Err(e) => {
+            eprintln!("[ERROR] Inclusion proof failed: {:#}", e);
+            std::process::exit(1);
+        }
+    };
+
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&outcome.output).unwrap_or_else(|_| "{}".to_string())
+    );
+
+    if outcome.no_ledger_entry || !outcome.output.verified {
+        std::process::exit(2);
+    }
+    Ok(())
+}
+
+fn run_verify_file(file: &PathBuf, ledger: &PathBuf) -> Result<()> {
     println!(
         "\x1b[1;36m====================================================================\x1b[0m"
     );
@@ -927,30 +1092,30 @@ fn run_verify(args: VerifyArgs) -> Result<()> {
     println!(
         "\x1b[1;36m====================================================================\x1b[0m"
     );
-    println!("  Parquet Block : {}", args.file.display());
-    println!("  Merkle Ledger : {}", args.ledger.display());
+    println!("  Parquet Block : {}", file.display());
+    println!("  Merkle Ledger : {}", ledger.display());
     println!("  Standard      : RFC 6962 Certificate Transparency Tree");
     println!(
         "\x1b[1;36m--------------------------------------------------------------------\x1b[0m"
     );
 
-    if !args.file.exists() {
+    if !file.exists() {
         println!(
             "\x1b[1;31m[ERROR] Parquet block file does not exist: {}\x1b[0m",
-            args.file.display()
+            file.display()
         );
         std::process::exit(1);
     }
 
-    if !args.ledger.exists() {
+    if !ledger.exists() {
         println!(
             "\x1b[1;31m[ERROR] Cryptographic ledger file does not exist: {}\x1b[0m",
-            args.ledger.display()
+            ledger.display()
         );
         std::process::exit(1);
     }
 
-    let report = match verify_block_with_ledger(&args.file, &args.ledger) {
+    let report = match verify_block_with_ledger(file, ledger) {
         Ok(r) => r,
         Err(e) => {
             println!("\n\x1b[1;41;37m   [ALARM] FORENSIC TAMPERING DETECTED! INTEGRITY COMPROMISED!   \x1b[0m");
