@@ -180,15 +180,12 @@ pub struct ConsistencyReport {
 /// back to next to the ledger itself.
 fn parquet_for_entry(ledger_path: &Path, entry: &LedgerEntry) -> Option<std::path::PathBuf> {
     let parent = ledger_path.parent()?;
-    for candidate in [
+    [
         parent.join("parquet").join(&entry.parquet_file),
         parent.join(&entry.parquet_file),
-    ] {
-        if candidate.exists() {
-            return Some(candidate);
-        }
-    }
-    None
+    ]
+    .into_iter()
+    .find(|candidate| candidate.exists())
 }
 
 /// Checks the cumulative prefix chain described in the module docs.
