@@ -16,6 +16,7 @@ path = "src/main.rs"
 ulpf-core = { path = "../ulpf-core" }
 ulpf-integrity = { path = "../ulpf-integrity" }
 ulpf-ai = { path = "../ulpf-ai" }
+crossbeam-channel = { workspace = true }
 tokio = { workspace = true }
 clap = { workspace = true }
 tracing = { workspace = true }
