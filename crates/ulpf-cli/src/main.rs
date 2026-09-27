@@ -1009,8 +1009,8 @@ fn run_consistency(ledger: &std::path::Path) -> Result<()> {
         std::process::exit(1);
     }
 
-    println!("\n  {:>10} {:>10} {:>10} {:>10} {:>6} {:>6} {:>6}  {verdict}",
-        "prev", "curr", "prev_sz", "curr_sz", "rows", "roots", "proof", verdict = "verdict");
+    println!("\n  {:>10} {:>10} {:>10} {:>10} {:>6} {:>6} {:>6}  verdict",
+        "prev", "curr", "prev_sz", "curr_sz", "rows", "roots", "proof");
     for pair in &report.pairs {
         let mark = |ok: bool| if ok { "ok" } else { "FAIL" };
         println!("  {:>10} {:>10} {:>10} {:>10} {:>6} {:>6} {:>6}  {}",
