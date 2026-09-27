@@ -643,6 +643,7 @@ async fn run_ingest(args: IngestArgs) -> Result<()> {
                             IncomingLog::new(metadata.product.vendor_name, metadata.raw_data)
                                 .with_timestamp(time)
                                 .with_event_id(metadata.event_id)
+                                .with_raw_hash(metadata.raw_hash)
                                 .with_ocsf(ocsf_json);
                         if let Some(flush_res) = batcher.push(incoming)? {
                             report_flush("", &flush_res);
