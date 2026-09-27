@@ -1,9 +1,10 @@
+use std::collections::HashSet;
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader};
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
@@ -13,7 +14,7 @@ use crossbeam_channel::{bounded, RecvTimeoutError, TrySendError};
 use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
 
-use ulpf_ai::drain::AlertSeverity;
+use ulpf_ai::drain::{AlertSeverity, AnomalyType};
 use ulpf_ai::evaluator::{load_sidecar_gt, EvaluatorEngine, GtOverrides};
 use ulpf_ai::onboarder::{DynamicParserRegistry, Onboarder};
 use ulpf_ai::pipeline::TieredPipeline;
@@ -363,6 +364,20 @@ fn resolve_pop_chunk(args: &IngestArgs) -> usize {
     }
 }
 
+/// Claim a newly-seen template for alerting. The first worker to observe a
+/// novel shape owns the NewTemplate alert; later workers seeing the same
+/// template treat it as known (returns false) so one new format yields one
+/// alert instead of up to N (one per worker) with an inflated total_anomalies.
+/// Single short lock, and only on the rare NewTemplate path — never on the
+/// per-event hot path. Poisoned mutex degrades to emitting (fail-open: a
+/// duplicate alert beats a swallowed one).
+fn claim_new_template(seen: &Mutex<HashSet<String>>, template: &str) -> bool {
+    match seen.lock() {
+        Ok(mut guard) => guard.insert(template.to_string()),
+        Err(_) => true,
+    }
+}
+
 /// Run the live ingest pipeline: sockets → bounded queue → OCSF parse →
 /// Drain anomaly check → Merkle batching. SIGINT/SIGTERM drains the queue
 /// and flushes the tail batch; Block-policy producers parked at shutdown
@@ -675,6 +690,11 @@ async fn run_ingest(args: IngestArgs) -> Result<()> {
     let ring_capacity = (10_000 / args.parse_workers).max(1);
     let pop_chunk = resolve_pop_chunk(&args);
     let drop_flush = args.drop_on_full;
+    // Shared NewTemplate dedupe: each worker's DrainMiner fires NewTemplate
+    // independently, so without this one novel format yields up to N alerts.
+    // Keyed by template string (identical shapes mine identical templates);
+    // cluster ids differ per worker and must NOT be the key.
+    let emitted_templates: Arc<Mutex<HashSet<String>>> = Arc::new(Mutex::new(HashSet::new()));
     let mut worker_handles = Vec::with_capacity(args.parse_workers);
     for (worker_id, my_parsed) in worker_parsed.iter().enumerate() {
         let queue_w = queue.clone();
@@ -686,6 +706,7 @@ async fn run_ingest(args: IngestArgs) -> Result<()> {
         let depth_w = flush_depth.clone();
         let shutdown_w = parse_shutdown.clone();
         let my_parsed_w = my_parsed.clone();
+        let emitted_w = emitted_templates.clone();
         worker_handles.push(
             std::thread::Builder::new()
                 .name(format!("ulpf-parse-{worker_id}"))
@@ -713,11 +734,25 @@ async fn run_ingest(args: IngestArgs) -> Result<()> {
                             parsed_w.fetch_add(1, Ordering::Relaxed);
                             my_parsed_w.fetch_add(1, Ordering::Relaxed);
                             if let Some(alert) = anomaly {
-                                anomalies_w.fetch_add(1, Ordering::Relaxed);
-                                if alert.severity == AlertSeverity::High
-                                    || alert.severity == AlertSeverity::Critical
-                                {
-                                    warn!("\x1b[1;31m[SECURITY ALERT]\x1b[0m {:?}", alert.message);
+                                // Dedupe NewTemplate across workers: first
+                                // claimant owns the alert + the count, the rest
+                                // treat the shape as known. Surge alerts are
+                                // per-worker by design (see setup comment) and
+                                // pass through untouched.
+                                let mut emit = true;
+                                if alert.anomaly_type == AnomalyType::NewTemplate {
+                                    emit = claim_new_template(&emitted_w, &alert.template);
+                                }
+                                if emit {
+                                    anomalies_w.fetch_add(1, Ordering::Relaxed);
+                                    if alert.severity == AlertSeverity::High
+                                        || alert.severity == AlertSeverity::Critical
+                                    {
+                                        warn!(
+                                            "\x1b[1;31m[SECURITY ALERT]\x1b[0m {:?}",
+                                            alert.message
+                                        );
+                                    }
                                 }
                             }
                             if drop_flush {
@@ -1702,5 +1737,42 @@ mod tests {
         assert_eq!(resolve_pop_chunk(&args), 1000);
         args.pop_chunk = Some(0);
         assert_eq!(resolve_pop_chunk(&args), 1);
+    }
+
+    #[test]
+    fn new_template_dedupe_across_workers_emits_once() {
+        // Two workers, same novel shape: each private DrainMiner fires
+        // NewTemplate independently, but the shared claim set lets exactly
+        // one through — the first claimant owns the alert + the count.
+        use ulpf_ai::drain::AnomalyType;
+
+        let seen: Mutex<HashSet<String>> = Mutex::new(HashSet::new());
+        let novel = "BLURB-9-424242: frobnicate widget 12345 on quux-7 edge node";
+        let workers = 2;
+        let mut emitted = 0usize;
+        for _ in 0..workers {
+            let pipeline = TieredPipeline::with_ring_buffer_capacity(64);
+            let (_, anomaly) = pipeline.process_live(novel);
+            let alert = anomaly.expect("novel shape must fire on a fresh miner");
+            assert_eq!(alert.anomaly_type, AnomalyType::NewTemplate);
+            if claim_new_template(&seen, &alert.template) {
+                emitted += 1;
+            }
+        }
+        assert_eq!(
+            emitted, 1,
+            "same novel shape across {workers} workers must emit exactly one NewTemplate"
+        );
+
+        // A genuinely different shape still alerts (dedupe is per-template).
+        let other = TieredPipeline::with_ring_buffer_capacity(64);
+        let (_, anomaly) =
+            other.process_live("%ZYX-1-999001: completely different gizmo burst happened at noon");
+        let alert = anomaly.expect("distinct shape must fire on a fresh miner");
+        assert_eq!(alert.anomaly_type, AnomalyType::NewTemplate);
+        assert!(
+            claim_new_template(&seen, &alert.template),
+            "distinct template must not be suppressed by the earlier claim"
+        );
     }
 }
