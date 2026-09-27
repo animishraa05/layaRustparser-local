@@ -975,9 +975,7 @@ fn run_consistency(ledger: &std::path::Path) -> Result<()> {
     println!(
         "\x1b[1;36m====================================================================\x1b[0m"
     );
-    println!(
-        "\x1b[1;32m           ULPF Cumulative Ledger Consistency Auditor             \x1b[0m"
-    );
+    println!("\x1b[1;32m           ULPF Cumulative Ledger Consistency Auditor             \x1b[0m");
     println!(
         "\x1b[1;36m====================================================================\x1b[0m"
     );
@@ -998,7 +996,10 @@ fn run_consistency(ledger: &std::path::Path) -> Result<()> {
     let report = match ulpf_integrity::proof::check_ledger_consistency(ledger) {
         Ok(r) => r,
         Err(e) => {
-            println!("\x1b[1;31m[ERROR] Consistency audit failed to run: {}\x1b[0m", e);
+            println!(
+                "\x1b[1;31m[ERROR] Consistency audit failed to run: {}\x1b[0m",
+                e
+            );
             std::process::exit(1);
         }
     };
@@ -1011,11 +1012,14 @@ fn run_consistency(ledger: &std::path::Path) -> Result<()> {
         std::process::exit(1);
     }
 
-    println!("\n  {:>10} {:>10} {:>10} {:>10} {:>6} {:>6} {:>6}  verdict",
-        "prev", "curr", "prev_sz", "curr_sz", "rows", "roots", "proof");
+    println!(
+        "\n  {:>10} {:>10} {:>10} {:>10} {:>6} {:>6} {:>6}  verdict",
+        "prev", "curr", "prev_sz", "curr_sz", "rows", "roots", "proof"
+    );
     for pair in &report.pairs {
         let mark = |ok: bool| if ok { "ok" } else { "FAIL" };
-        println!("  {:>10} {:>10} {:>10} {:>10} {:>6} {:>6} {:>6}  {}",
+        println!(
+            "  {:>10} {:>10} {:>10} {:>10} {:>6} {:>6} {:>6}  {}",
             pair.prev_block,
             pair.curr_block,
             pair.prev_size,
@@ -1023,7 +1027,11 @@ fn run_consistency(ledger: &std::path::Path) -> Result<()> {
             mark(pair.row_counts_match),
             mark(pair.blocks_valid),
             mark(pair.proof_valid),
-            if pair.passed { "\x1b[32mPASS\x1b[0m" } else { "\x1b[1;31mFAIL\x1b[0m" },
+            if pair.passed {
+                "\x1b[32mPASS\x1b[0m"
+            } else {
+                "\x1b[1;31mFAIL\x1b[0m"
+            },
         );
     }
 

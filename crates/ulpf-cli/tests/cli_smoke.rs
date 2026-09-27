@@ -539,8 +539,8 @@ fn prove_valid_leaf_exits_zero_with_verified_true() {
         out.status.code(),
         String::from_utf8_lossy(&out.stderr)
     );
-    let proof: serde_json::Value = serde_json::from_slice(&out.stdout)
-        .expect("prove stdout must be pure JSON");
+    let proof: serde_json::Value =
+        serde_json::from_slice(&out.stdout).expect("prove stdout must be pure JSON");
     assert_eq!(proof.get("block_id").and_then(|v| v.as_u64()), Some(1));
     assert_eq!(proof.get("leaf_index").and_then(|v| v.as_u64()), Some(342));
     assert_eq!(proof.get("tree_size").and_then(|v| v.as_u64()), Some(1000));
@@ -582,10 +582,13 @@ fn prove_tampered_block_exits_two_with_verified_false() {
         "unverifiable leaf must exit 2, got {:?}",
         out.status.code()
     );
-    let proof: serde_json::Value = serde_json::from_slice(&out.stdout)
-        .expect("exit-2 prove must still print full JSON");
+    let proof: serde_json::Value =
+        serde_json::from_slice(&out.stdout).expect("exit-2 prove must still print full JSON");
     assert_eq!(proof.get("verified"), Some(&serde_json::Value::Bool(false)));
-    assert!(proof.get("ledger_merkle_root").and_then(|v| v.as_str()).is_some());
+    assert!(proof
+        .get("ledger_merkle_root")
+        .and_then(|v| v.as_str())
+        .is_some());
 }
 
 /// #5: an out-of-bounds leaf is a usage error (exit 1), not a verdict.
