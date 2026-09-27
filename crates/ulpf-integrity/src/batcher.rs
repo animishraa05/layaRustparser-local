@@ -58,6 +58,10 @@ pub struct IncomingLog {
     pub timestamp: Option<i64>,
     pub event_id: Option<String>,
     pub ocsf_json: Option<String>,
+    /// Hex-encoded SHA-256 of `raw_log`, passed through from the parser so the
+    /// batcher never re-hashes. `None` (e.g. older callers, tests) falls back
+    /// to hashing at flush time — output is byte-identical either way.
+    pub raw_hash: Option<String>,
 }
 
 impl IncomingLog {
@@ -68,6 +72,7 @@ impl IncomingLog {
             timestamp: None,
             event_id: None,
             ocsf_json: None,
+            raw_hash: None,
         }
     }
 
@@ -83,6 +88,11 @@ impl IncomingLog {
 
     pub fn with_ocsf(mut self, ocsf: impl Into<String>) -> Self {
         self.ocsf_json = Some(ocsf.into());
+        self
+    }
+
+    pub fn with_raw_hash(mut self, hash: impl Into<String>) -> Self {
+        self.raw_hash = Some(hash.into());
         self
     }
 }
