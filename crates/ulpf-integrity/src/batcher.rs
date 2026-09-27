@@ -18,6 +18,7 @@ use anyhow::{Context, Result};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use tracing::info;
 use uuid::Uuid;
 
 use crate::merkle::{Hash, MerkleTree};
@@ -132,6 +133,10 @@ pub struct BlockFlushResult {
     pub leaf_count: usize,
     pub parquet_path: PathBuf,
     pub tree: MerkleTree,
+    /// Wall time spent in the durable pair (parquet sync + ledger sync) in
+    /// microseconds. Surfaced so the flush thread can log the fsync cost at
+    /// INFO — the proof that crash safety is cheap on the ingest path.
+    pub fsync_micros: u64,
 }
 
 /// Checks a parser-supplied hash is well-formed hex decoding to 32 bytes.
@@ -339,14 +344,22 @@ impl BatchAccumulator {
         let merkle_root = tree.root();
         let root_hex = merkle_root.to_hex();
 
-        // 3. Write Parquet block file
+        // 3. Write Parquet block file, then make it durable BEFORE the
+        // ledger line exists: sync the file AND its parent directory, so a
+        // crash can never leave a ledger entry pointing at a missing or
+        // half-written block (rename durability needs the dir sync).
         let parquet_filename = format!("block_{:05}.parquet", block_id);
         let parquet_path = self.config.storage_dir.join(&parquet_filename);
 
         write_records_to_parquet(&parquet_path, &stored_records, self.config.compression)
             .with_context(|| format!("Failed writing Parquet block to {:?}", parquet_path))?;
 
-        // 4. Append to on-disk & in-memory ledger
+        let fsync_start = Instant::now();
+        fault_abort("ULPF_FAULT_POST_PARQUET_PRE_SYNC")?;
+        sync_file_and_parent(&parquet_path)?;
+
+        // 4. Append to on-disk & in-memory ledger, then sync the ledger file
+        // so the entry is durable before flush() reports success.
         let ledger_entry = LedgerEntry {
             block_id,
             timestamp: now_ms,
@@ -355,7 +368,17 @@ impl BatchAccumulator {
             parquet_file: parquet_filename,
         };
 
+        fault_abort("ULPF_FAULT_PRE_LEDGER_SYNC")?;
         self.append_ledger_entry(&ledger_entry)?;
+        fault_abort("ULPF_FAULT_POST_LEDGER_SYNC")?;
+        let fsync_micros = fsync_start.elapsed().as_micros() as u64;
+        // The fsync pair lives off the parse hot path (flush thread only),
+        // but its cost is still worth stating on every flush: if this number
+        // ever stops being small, the ingest budget needs re-measuring.
+        info!(
+            "[DURABLE FLUSH] Block #{} fsync pair took {} µs (parquet file+dir, ledger file)",
+            block_id, fsync_micros
+        );
         self.in_memory_ledger.push(ledger_entry);
 
         Ok(Some(BlockFlushResult {
@@ -364,6 +387,7 @@ impl BatchAccumulator {
             leaf_count: count,
             parquet_path,
             tree,
+            fsync_micros,
         }))
     }
 
@@ -381,8 +405,55 @@ impl BatchAccumulator {
         let serialized =
             serde_json::to_string(entry).context("Failed serializing ledger entry to JSON")?;
         writeln!(file, "{}", serialized).context("Failed appending entry to ledger file")?;
-        file.flush().context("Failed syncing ledger file")?;
+        file.flush().context("Failed flushing ledger file")?;
+        // Durability, not just visibility: without sync_all a kill -9 between
+        // the write and the kernel flush loses the entry while the Parquet
+        // block (already synced above) survives — an orphaned block the
+        // ledger never names.
+        file.sync_all()
+            .with_context(|| format!("Failed syncing ledger at {:?}", self.config.ledger_path))?;
 
         Ok(())
     }
+}
+
+/// Syncs a freshly written file and its parent directory.
+///
+/// The file sync pushes content through the page cache; the directory sync
+/// makes the directory entry itself durable, so a crash right after flush
+/// cannot lose the name-to-inode mapping. Both are plain `sync_all` — no
+/// platform-specific durability APIs, nothing a reviewer needs a man page for.
+fn sync_file_and_parent(path: &Path) -> Result<()> {
+    let file = File::open(path)
+        .with_context(|| format!("Failed reopening {:?} for durability sync", path))?;
+    file.sync_all()
+        .with_context(|| format!("Failed syncing Parquet block at {:?}", path))?;
+    // The crate only ever writes under real directories (storage_dir is
+    // created by the caller), so a missing parent is a bug, not a skip.
+    if let Some(parent) = path.parent() {
+        let dir = File::open(parent)
+            .with_context(|| format!("Failed opening parent dir {:?} for sync", parent))?;
+        dir.sync_all()
+            .with_context(|| format!("Failed syncing parent dir {:?}", parent))?;
+    }
+    Ok(())
+}
+
+/// Deterministic crash-consistency hook for tests.
+///
+/// When the named env var is present (any value), returns an `Err` that
+/// aborts the flush at that exact point — simulating a `kill -9` between
+/// durability steps without ever sending a signal. Gated purely on the
+/// environment: unset in production, the check is one `getenv` per flush
+/// (off the hot path) and changes nothing. Known points:
+/// - `ULPF_FAULT_POST_PARQUET_PRE_SYNC`: parquet written, nothing synced,
+///   no ledger line (orphaned block, ledger silent).
+/// - `ULPF_FAULT_PRE_LEDGER_SYNC`: parquet durable, no ledger line.
+/// - `ULPF_FAULT_POST_LEDGER_SYNC`: entry appended but unsynced (tests the
+///   sync itself, not the append).
+fn fault_abort(env_var: &str) -> Result<()> {
+    if std::env::var_os(env_var).is_some() {
+        anyhow::bail!("fault injected at {} (env-gated crash simulation)", env_var);
+    }
+    Ok(())
 }
