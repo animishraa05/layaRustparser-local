@@ -10,7 +10,7 @@ use ulpf_core::parser::lru_cache::{LruStats, SignatureLruCache};
 use ulpf_core::parser::UniversalParser;
 use ulpf_core::schema::ocsf::NetworkActivity;
 
-use crate::drain::{DrainConfig, DrainMiner};
+use crate::drain::{AnomalyAlert, DrainConfig, DrainMiner};
 use crate::laya::LayaDecisionEngine;
 use crate::onboarder::{DynamicParserRegistry, Onboarder};
 
@@ -297,6 +297,37 @@ impl TieredPipeline {
     /// Process a raw log line through the 3-Tier Pipeline
     /// Guarantees sub-microsecond line rate without blocking for Tier-3 Laya
     pub fn process(&self, raw: &str) -> NetworkActivity {
+        // Scoring behavior is pinned here: no Drain accounting on the fast
+        // paths, anomaly discarded — `process_live` opts into both.
+        self.process_inner(raw, false).0
+    }
+
+    /// Live-ingest entry point: identical Tier-1/Tier-2/Tier-3 routing and
+    /// identical parse output as [`process`](Self::process), but the Drain
+    /// disposition `process` swallows is returned alongside the event.
+    ///
+    /// Why the extra pass exists: on a Tier-1 LRU (or Tier-1b route) hit
+    /// `process` never touches Drain, so once Tier-1 warms the rare-cluster
+    /// surge detector would go blind and the live `[SECURITY ALERT]` line
+    /// would fall silent. The accounting replay feeds the hit through Drain
+    /// purely to advance cluster counts and surface anomalies; the parse
+    /// result stays on the zero-copy fast path. Each ingest worker owns its
+    /// pipeline by value, so this mutex is per-worker uncontended — it never
+    /// reintroduces the shared-pipeline contention this design avoids.
+    /// Additive only: drain internals and scoring behavior are untouched.
+    pub fn process_live(&self, raw: &str) -> (NetworkActivity, Option<AnomalyAlert>) {
+        self.process_inner(raw, true)
+    }
+
+    /// Shared core behind [`process`](Self::process) (`tier1_accounting =
+    /// false`, anomaly discarded) and [`process_live`](Self::process_live)
+    /// (`true`, anomaly returned). The `false` path is the historical
+    /// `process` body verbatim — no behavioral change for existing callers.
+    fn process_inner(
+        &self,
+        raw: &str,
+        tier1_accounting: bool,
+    ) -> (NetworkActivity, Option<AnomalyAlert>) {
         self.total_events.fetch_add(1, Ordering::Relaxed);
 
         // ---------------------------------------------------------------------
@@ -314,7 +345,19 @@ impl TieredPipeline {
                 self.dispatch_triage_exemplar(sig_hash as usize, String::new(), raw);
             }
             // Direct zero-copy parse using cached vendor extractor
-            return self.parse_with_format(raw, format);
+            let activity = self.parse_with_format(raw, format);
+            if !tier1_accounting {
+                return (activity, None);
+            }
+            // Live ingest only: replay the hit through Drain so cluster
+            // counts keep advancing (and the surge detector keeps firing)
+            // after Tier-1 warms. Parse result is already in hand.
+            let anomaly = self
+                .drain
+                .lock()
+                .ok()
+                .and_then(|mut miner| miner.add_log(raw).anomaly);
+            return (activity, anomaly);
         }
 
         // ---------------------------------------------------------------------
@@ -340,7 +383,17 @@ impl TieredPipeline {
                         .ok()
                         .and_then(|mut reg| reg.parse_key(&key, raw));
                     if let Some(activity) = parsed {
-                        return activity;
+                        if !tier1_accounting {
+                            return (activity, None);
+                        }
+                        // Same accounting replay as the Tier-1 path: onboarded
+                        // shapes must advance Drain counts too.
+                        let anomaly = self
+                            .drain
+                            .lock()
+                            .ok()
+                            .and_then(|mut miner| miner.add_log(raw).anomaly);
+                        return (activity, anomaly);
                     }
                     // Stale route (parser evicted by the registry bound, or the
                     // shape drifted): drop it and fall through to Tier-2.
@@ -372,7 +425,9 @@ impl TieredPipeline {
             self.dispatch_triage_exemplar(sig_hash as usize, cluster_res.template, raw);
 
             // Pinned parse order: native → registry → lossless (promotes on success)
-            return self.parse_pinned(raw, sig_hash);
+            let activity = self.parse_pinned(raw, sig_hash);
+            let anomaly = tier1_accounting.then(|| cluster_res.anomaly).flatten();
+            return (activity, anomaly);
         }
 
         // ---------------------------------------------------------------------
@@ -385,7 +440,9 @@ impl TieredPipeline {
 
         // Pinned parse order on first sight too: the old path went straight to
         // lossless here, leaving the first line of every new cluster unparsed.
-        self.parse_pinned(raw, sig_hash)
+        let activity = self.parse_pinned(raw, sig_hash);
+        let anomaly = tier1_accounting.then(|| cluster_res.anomaly).flatten();
+        (activity, anomaly)
     }
 
     /// Pinned parse order on every Tier-1 miss:
@@ -554,6 +611,7 @@ impl Default for TieredPipeline {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::drain::AnomalyType;
 
     /// Stale order entries must never evict a newer buffer for a reused id,
     /// and the queue must stay bounded under onboard-then-reuse flood churn.
@@ -682,6 +740,97 @@ mod tests {
         assert!(
             stats.tier3_laya_dispatches >= 2,
             "Dispatched new clusters to Laya"
+        );
+    }
+
+    /// `process_live` must parse byte-identically to `process` while surfacing
+    /// the new-template anomaly `process` swallows (live `[SECURITY ALERT]`).
+    #[test]
+    fn test_process_live_matches_process_parse_and_reports_new_template() {
+        let live = TieredPipeline::new();
+        let plain = TieredPipeline::new();
+        let log = "%ASA-6-302013: Built inbound UDP connection 9001 for outside:9.9.9.9/53 to inside:8.8.8.8/53";
+
+        let (act_live, anomaly_first) = live.process_live(log);
+        let act_plain = plain.process(log);
+        // Clock/UUIDv7 metadata (time, event_id, ingest_time) is minted per
+        // call by construction — everything derived from the line must match.
+        let mut norm_live = act_live.clone();
+        let mut norm_plain = act_plain.clone();
+        for act in [&mut norm_live, &mut norm_plain] {
+            act.time = 0;
+            act.metadata.ingest_time = 0;
+            act.metadata.event_id.clear();
+        }
+        assert_eq!(
+            norm_live, norm_plain,
+            "live accessor must not change parse output"
+        );
+        assert_eq!(act_live.metadata.product.vendor_name, "Cisco");
+        let first = anomaly_first.expect("first sighting is a new template");
+        assert_eq!(first.anomaly_type, AnomalyType::NewTemplate);
+
+        // Second sighting of the same shape: Tier-1 hit, no new-template alert.
+        let (act2, anomaly_second) = live.process_live(log);
+        assert_eq!(act2.metadata.product.vendor_name, "Cisco");
+        assert!(
+            anomaly_second.is_none(),
+            "repeat shape must not re-alert, got {anomaly_second:?}"
+        );
+    }
+
+    /// The reason `process_live` exists: once Tier-1 warms, plain `process`
+    /// stops feeding Drain, so the rare-cluster surge detector goes blind.
+    /// The accounting replay must keep it firing on the live path.
+    #[test]
+    fn test_process_live_keeps_surge_detector_firing_after_tier1_warms() {
+        // Surge needs a baseline: total > rare_threshold * 3 = 15 first.
+        let filler = "%ASA-6-302013: Built inbound UDP connection 1001 for outside:1.1.1.1/53 to inside:2.2.2.2/53";
+        // Distinct syslog tag => its own cluster, rare until hammered.
+        let rare = "%ASA-4-106023: Deny udp src outside:203.0.113.9/53 dst inside:10.0.0.9/53 by access-group";
+
+        let live = TieredPipeline::new();
+        let plain = TieredPipeline::new();
+
+        for _ in 0..16 {
+            live.process_live(filler);
+            plain.process(filler);
+        }
+        // Hammer the rare shape: lines 2+ are Tier-1 hits on both paths. Only
+        // the live path replays them through Drain, so only it can reach the
+        // count > 5 surge tripwire (burst in one ms => rate >> 3.0).
+        let mut saw_surge_live = false;
+        for _ in 0..8 {
+            let (_, anomaly) = live.process_live(rare);
+            if matches!(anomaly, Some(ref a) if a.anomaly_type == AnomalyType::RareClusterSurge) {
+                saw_surge_live = true;
+            }
+            plain.process(rare);
+        }
+
+        assert!(
+            saw_surge_live,
+            "live path must fire RareClusterSurge for the hammered rare shape"
+        );
+        // The plain path fed Drain exactly once (first sighting); Tier-1
+        // starved it after that — the blindness the live accessor fixes.
+        // Read-only observation: `syslog_tag` is the P6.1 cluster anchor.
+        let rare_count = plain
+            .drain
+            .lock()
+            .unwrap()
+            .all_clusters_by_frequency()
+            .into_iter()
+            .find(|c| {
+                c.syslog_tag
+                    .as_deref()
+                    .is_some_and(|t| t.contains("106023"))
+            })
+            .map(|c| c.count)
+            .unwrap_or(0);
+        assert_eq!(
+            rare_count, 1,
+            "plain process path must leave the rare cluster frozen at first sight"
         );
     }
 }
