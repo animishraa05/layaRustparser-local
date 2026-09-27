@@ -101,8 +101,10 @@ struct ProveArgs {
     #[arg(short, long)]
     leaf: usize,
 
-    /// Path to the append-only cryptographic Merkle ledger
-    #[arg(short, long, default_value = "data/ledger.jsonl")]
+    /// Path to the append-only cryptographic Merkle ledger (long-only: `-l`
+    /// belongs to `--leaf` — the duplicate short flag panic'd every debug
+    /// build before P10.0 taught us this lesson)
+    #[arg(long, default_value = "data/ledger.jsonl")]
     ledger: PathBuf,
 }
 
