@@ -252,7 +252,12 @@ impl BatchAccumulator {
         for (i, item) in logs.into_iter().enumerate() {
             let event_id = item.event_id.unwrap_or_else(|| Uuid::now_v7().to_string());
             let timestamp = item.timestamp.unwrap_or(now_ms);
-            let raw_hash = hex::encode(Sha256::digest(item.raw_log.as_bytes()));
+            // Hash #2 deleted: the parser already hashed these exact bytes
+            // (unprefixed hex SHA-256), so pass it through. A missing hash —
+            // older callers, ad-hoc tests — recomputes the identical digest.
+            let raw_hash = item
+                .raw_hash
+                .unwrap_or_else(|| hex::encode(Sha256::digest(item.raw_log.as_bytes())));
             let ocsf_json = item.ocsf_json.unwrap_or_else(|| "{}".to_string());
 
             stored_records.push(StoredLogRecord {
