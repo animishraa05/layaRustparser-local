@@ -248,35 +248,52 @@ pub fn verify_block_with_ledger(
 ) -> Result<TamperReport> {
     let records = read_parquet_file(parquet_path.as_ref())?;
     let ledger_entries = BatchAccumulator::load_ledger_entries(ledger_path.as_ref())?;
+    let block_id = block_id_for_parquet(parquet_path.as_ref(), records.first().map(|r| r.block_id));
+    let entry = find_ledger_entry(&ledger_entries, block_id, ledger_path.as_ref())?;
+    Ok(verify_records(&records, &entry))
+}
 
-    // Determine target block ID: from records or filename
-    let block_id = if let Some(first) = records.first() {
-        first.block_id
-    } else {
-        // Parse block_id from filename like "block_00001.parquet"
-        let fname = parquet_path
-            .as_ref()
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or("");
-        fname
-            .strip_prefix("block_")
-            .and_then(|s| s.parse::<u64>().ok())
-            .unwrap_or(0)
-    };
+/// Determines the target block id for a Parquet file: the stored `block_id`
+/// of its first record when the file is non-empty, otherwise the numeric
+/// suffix of its `block_NNNNN.parquet` filename (defaulting to 0).
+///
+/// Shared by `verify` and `prove` so both CLIs name the same block for the
+/// same file — a divergence here would anchor proofs to the wrong root.
+pub fn block_id_for_parquet(parquet_path: &Path, first_record_block: Option<u64>) -> u64 {
+    if let Some(id) = first_record_block {
+        return id;
+    }
+    // Parse block_id from filename like "block_00001.parquet"
+    let fname = parquet_path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("");
+    fname
+        .strip_prefix("block_")
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(0)
+}
 
-    let entry = ledger_entries
-        .into_iter()
+/// Locates the ledger entry for `block_id`, cloning it out of the slice.
+///
+/// Factored out of `verify_block_with_ledger` so `prove` reuses the exact
+/// same lookup (and the exact same "no entry" error) instead of duplicating
+/// the scan with its own off-by-one waiting to happen.
+pub fn find_ledger_entry(
+    ledger_entries: &[LedgerEntry],
+    block_id: u64,
+    ledger_path: &Path,
+) -> Result<LedgerEntry> {
+    ledger_entries
+        .iter()
         .find(|e| e.block_id == block_id)
+        .cloned()
         .with_context(|| {
             format!(
                 "No corresponding ledger entry found for block ID {} in {:?}",
-                block_id,
-                ledger_path.as_ref()
+                block_id, ledger_path,
             )
-        })?;
-
-    Ok(verify_records(&records, &entry))
+        })
 }
 
 /// Performs in-memory forensic verification on a slice of `StoredLogRecord`.

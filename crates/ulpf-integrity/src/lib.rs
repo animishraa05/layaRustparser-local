@@ -18,6 +18,7 @@
 
 pub mod batcher;
 pub mod merkle;
+pub mod proof;
 pub mod storage;
 pub mod tamper;
 
@@ -30,11 +31,15 @@ pub use merkle::{
     verify_consistency_proof, verify_inclusion_proof, verify_inclusion_proof_by_hash, Hash,
     InclusionProof, MerkleError, MerkleTree, Side, LEAF_PREFIX, NODE_PREFIX,
 };
+pub use proof::{
+    check_ledger_consistency, prove_leaf, ConsistencyPair, ConsistencyReport, InclusionProofOutput,
+    ProofAuditStep, ProveOutcome,
+};
 pub use storage::{
     batch_to_records, log_schema, read_parquet_file, records_to_batch, write_parquet_file,
     write_records_to_parquet, ParquetCompression, StoredLogRecord,
 };
 pub use tamper::{
-    verify_block_file, verify_block_with_ledger, verify_records, TamperReason, TamperReport,
-    TamperedRecord,
+    block_id_for_parquet, find_ledger_entry, verify_block_file, verify_block_with_ledger,
+    verify_records, TamperReason, TamperReport, TamperedRecord,
 };
