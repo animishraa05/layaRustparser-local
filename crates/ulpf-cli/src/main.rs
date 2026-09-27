@@ -143,13 +143,13 @@ struct IngestArgs {
     #[arg(long, default_value_t = default_parse_workers())]
     parse_workers: usize,
 
-    /// Max lines a parse worker grabs per queue pop (default: auto =
-    /// batch_size / parse_workers, floored at 1). The old behavior popped a
-    /// full batch_size per wake, so one worker batch-stole everything at low
-    /// volume — ~2 of N workers engaged, per-worker DrainMiners partitioned
-    /// history, and small rare-shape bursts could go surge-silent on a worker
-    /// with no baseline. A small chunk spreads shares across workers; pass an
-    /// explicit value to A/B tune mutex churn vs spread at high rates.
+    /// Max lines a parse worker grabs per queue pop (default: auto = 8).
+    /// The grab must stay small in absolute terms: a full-batch pop lets one
+    /// worker batch-steal the whole queue per wake at low volume, so ~2 of N
+    /// workers engage, per-worker DrainMiners partition history, and small
+    /// rare-shape bursts can go surge-silent on a worker with no baseline.
+    /// A small chunk spreads shares across workers; pass an explicit value
+    /// to A/B tune mutex churn vs spread at high rates.
     #[arg(long)]
     pop_chunk: Option<usize>,
 }
@@ -659,6 +659,19 @@ async fn run_ingest(args: IngestArgs) -> Result<()> {
     // The pop chunk is deliberately much smaller than the Merkle batch_size:
     // a full-batch pop lets one worker batch-steal the whole queue per wake
     // at low volume, leaving the other workers' DrainMiners with no history.
+    //
+    // RESIDUAL SURGE-DILUTION (known, not fixed here): each worker's
+    // DrainMiner partitions history per worker, so the RareClusterSurge trip
+    // still evaluates per worker — `total > rare_count_threshold * 3` with a
+    // per-worker baseline, `prev_count <= rare_count_threshold < count` on
+    // THAT worker's cluster. A globally-surging shape spread evenly over W
+    // workers needs ~W x the single-worker volume before any one worker's
+    // count crosses the threshold, so low-volume bursts can stay surge-silent
+    // (silence here means "below threshold", never "healthy"). The small pop
+    // chunk above narrows but does not close this gap. A real fix needs
+    // cross-worker accounting (route-by-template-hash or a shared counting
+    // thread) — filed as follow-up design work; deliberately NOT a per-event
+    // shared atomic/counter here, which would put a lock on the hot path.
     let ring_capacity = (10_000 / args.parse_workers).max(1);
     let pop_chunk = resolve_pop_chunk(&args);
     let drop_flush = args.drop_on_full;
