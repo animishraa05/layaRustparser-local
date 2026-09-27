@@ -84,6 +84,15 @@ struct InspectArgs {
     count: usize,
 }
 
+/// Default parse worker count: one thread per core. Parse is synchronous CPU
+/// work, so plain threads (not tokio tasks + spawn_blocking) at nproc keeps
+/// every core fed without oversubscribing the runtime.
+fn default_parse_workers() -> usize {
+    std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(4)
+}
+
 /// Live Syslog ingest flags: where to listen, where to archive, and how the
 /// bounded queue between them behaves when producers outrun the consumer.
 #[derive(Args, Debug)]
@@ -124,6 +133,12 @@ struct IngestArgs {
     /// default blocks to preserve the lossless provenance invariant)
     #[arg(long, default_value_t = false)]
     drop_on_full: bool,
+
+    /// Parse worker threads, each owning a TieredPipeline by value
+    /// (default: one per core; a shared pipeline would reintroduce
+    /// Mutex<DrainMiner> contention across workers)
+    #[arg(long, default_value_t = default_parse_workers())]
+    parse_workers: usize,
 }
 
 #[derive(Args, Debug)]
@@ -299,6 +314,14 @@ fn validate_ingest_args(args: &IngestArgs) -> Result<()> {
         anyhow::bail!(
             "--queue-capacity must be greater than 0 (got 0): \
              zero capacity with block-on-full parks producers forever"
+        );
+    }
+    // Zero parse workers would start no consumer at all: the queue would
+    // fill and block-on-full producers would park forever.
+    if args.parse_workers == 0 {
+        anyhow::bail!(
+            "--parse-workers must be greater than 0 (got 0): \
+             no worker would ever drain the ingest queue"
         );
     }
     Ok(())
@@ -1420,6 +1443,7 @@ mod tests {
             reuse_port: true,
             queue_capacity,
             drop_on_full: false,
+            parse_workers: default_parse_workers(),
         }
     }
 
@@ -1435,5 +1459,26 @@ mod tests {
     fn positive_queue_capacity_is_accepted() {
         validate_ingest_args(&ingest_args_with_capacity(1)).unwrap();
         validate_ingest_args(&ingest_args_with_capacity(50_000)).unwrap();
+    }
+
+    #[test]
+    fn zero_parse_workers_is_rejected() {
+        // No consumer would ever drain the queue, so fail fast like the
+        // zero-capacity case instead of hanging on the first blocked push.
+        let mut args = ingest_args_with_capacity(50_000);
+        args.parse_workers = 0;
+        let err = validate_ingest_args(&args).unwrap_err();
+        assert!(err.to_string().contains("--parse-workers"));
+    }
+
+    #[test]
+    fn parse_workers_default_to_available_parallelism() {
+        // The clap default must track nproc so a bare `ingest` feeds every
+        // core without oversubscribing the tokio runtime.
+        let expected = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(4);
+        assert_eq!(default_parse_workers(), expected);
+        assert!(ingest_args_with_capacity(50_000).parse_workers >= 1);
     }
 }
