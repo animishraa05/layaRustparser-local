@@ -499,13 +499,30 @@ pub async fn get_prove_inclusion(
     };
 
     let target_hash = ulpf_integrity::merkle::hash_leaf(records[leaf_index].raw_log.as_bytes());
-    let verified = ulpf_integrity::merkle::verify_inclusion_proof_by_hash(
-        &target_hash,
-        proof.leaf_index,
-        proof.tree_size,
-        &proof.audit_path,
-        &tree.root(),
-    );
+    // Anchor on the LEDGER root: verifying against tree.root() succeeds by
+    // construction (the tree was just rebuilt from these same rows), so the
+    // old code reported verified:true even for tampered blocks. A missing
+    // ledger entry falls back to the recomputed root — degraded, but the
+    // response still carries ledger_merkle_root:null saying so.
+    let verified = match ledger_root.as_deref() {
+        Some(hex) => match ulpf_integrity::merkle::Hash::from_hex(hex) {
+            Ok(expected) => ulpf_integrity::merkle::verify_inclusion_proof_by_hash(
+                &target_hash,
+                proof.leaf_index,
+                proof.tree_size,
+                &proof.audit_path,
+                &expected,
+            ),
+            Err(_) => false,
+        },
+        None => ulpf_integrity::merkle::verify_inclusion_proof_by_hash(
+            &target_hash,
+            proof.leaf_index,
+            proof.tree_size,
+            &proof.audit_path,
+            &tree.root(),
+        ),
+    };
 
     let audit_steps: Vec<AuditStep> = proof
         .audit_path
