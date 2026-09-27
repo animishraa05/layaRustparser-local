@@ -10,6 +10,79 @@ use ulpf_integrity::storage::{
 };
 use ulpf_integrity::tamper::{verify_block_file, verify_block_with_ledger, TamperReason};
 
+/// Serializes every test that drives a flush.
+///
+/// The crash hooks in `batcher.rs` are env-gated (`ULPF_FAULT_*`), and the
+/// environment is process-global: a fault var set by one test would abort
+/// flushes in every other test sharing this binary. Every flush-driving
+/// test — old and new — holds this lock, so a fault window can never leak
+/// into an unrelated flush. Cheap (uncontended mutex, held for ms) and
+/// load-bearing: remove it and the fault tests become flaky under
+/// `cargo test` parallelism.
+static FLUSH_SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn exclusive_flush_env() -> std::sync::MutexGuard<'static, ()> {
+    FLUSH_SERIAL.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Sets an `ULPF_FAULT_*` var for exactly one flush and removes it on drop —
+/// even on panic — so no fault survives into the next test.
+struct FaultEnv(&'static str);
+
+impl FaultEnv {
+    fn set(name: &'static str) -> Self {
+        // SAFETY: single-threaded w.r.t. other flushes by FLUSH_SERIAL; no
+        // other test in this binary touches these var names.
+        unsafe { std::env::set_var(name, "1") };
+        FaultEnv(name)
+    }
+}
+
+impl Drop for FaultEnv {
+    fn drop(&mut self) {
+        unsafe { std::env::remove_var(self.0) };
+    }
+}
+
+/// Builds a batcher over a fresh scratch dir with caller-chosen thresholds.
+fn scratch_batcher(
+    max_batch_size: usize,
+    max_batch_duration_ms: u64,
+) -> (TempDir, BatchAccumulator) {
+    let temp_dir = TempDir::new().expect("create temp dir");
+    let config = BatcherConfig {
+        max_batch_size,
+        max_batch_duration_ms,
+        storage_dir: temp_dir.path().join("parquet"),
+        ledger_path: temp_dir.path().join("ledger.jsonl"),
+        compression: ParquetCompression::Snappy,
+    };
+    let batcher = BatchAccumulator::new(config).expect("init batcher");
+    (temp_dir, batcher)
+}
+
+/// Every ledger entry must name a Parquet file that exists on disk — the
+/// crash-safety invariant the durable pair exists to guarantee (a ledger
+/// line without its block is a proof pointing at nothing).
+fn assert_no_orphan_ledger_lines(ledger_path: &std::path::Path) {
+    // A ledger that was never created holds zero entries — vacuously clean.
+    if !ledger_path.exists() {
+        return;
+    }
+    let entries =
+        BatchAccumulator::load_ledger_entries(ledger_path).expect("ledger must still parse");
+    let parent = ledger_path.parent().expect("ledger has a parent dir");
+    for entry in &entries {
+        let block_path = parent.join("parquet").join(&entry.parquet_file);
+        assert!(
+            block_path.exists(),
+            "ledger entry for block #{} names {:?}, which is missing: orphan!",
+            entry.block_id,
+            block_path
+        );
+    }
+}
+
 /// Helper to generate synthetic log strings for testing
 fn generate_logs(count: usize) -> Vec<String> {
     (0..count)
@@ -216,6 +289,7 @@ fn test_parquet_write_and_read_cycle() {
 
 #[test]
 fn test_batcher_dual_trigger_count_and_ledger() {
+    let _exclusive_io = exclusive_flush_env();
     let temp_dir = TempDir::new().expect("create temp dir");
     let storage_dir = temp_dir.path().join("parquet");
     let ledger_path = temp_dir.path().join("ledger.jsonl");
@@ -271,6 +345,7 @@ fn test_batcher_dual_trigger_count_and_ledger() {
 
 #[test]
 fn test_batcher_dual_trigger_duration_timeout() {
+    let _exclusive_io = exclusive_flush_env();
     let temp_dir = TempDir::new().expect("create temp dir");
     let storage_dir = temp_dir.path().join("parquet");
     let ledger_path = temp_dir.path().join("ledger.jsonl");
@@ -315,6 +390,7 @@ fn test_batcher_dual_trigger_duration_timeout() {
 
 #[test]
 fn test_forensic_tamper_detection_byte_flip() {
+    let _exclusive_io = exclusive_flush_env();
     let temp_dir = TempDir::new().expect("create temp dir");
     let storage_dir = temp_dir.path().join("parquet");
     let ledger_path = temp_dir.path().join("ledger.jsonl");
@@ -384,6 +460,7 @@ fn test_forensic_tamper_detection_byte_flip() {
 
 #[test]
 fn test_forensic_tamper_detection_ip_alteration() {
+    let _exclusive_io = exclusive_flush_env();
     let temp_dir = TempDir::new().expect("create temp dir");
     let storage_dir = temp_dir.path().join("parquet");
     let ledger_path = temp_dir.path().join("ledger.jsonl");
@@ -421,6 +498,7 @@ fn test_forensic_tamper_detection_ip_alteration() {
 
 #[test]
 fn test_forensic_tamper_detection_row_deletion() {
+    let _exclusive_io = exclusive_flush_env();
     let temp_dir = TempDir::new().expect("create temp dir");
     let storage_dir = temp_dir.path().join("parquet");
     let ledger_path = temp_dir.path().join("ledger.jsonl");
@@ -468,6 +546,7 @@ fn test_forensic_tamper_detection_row_deletion() {
 
 #[test]
 fn test_forensic_tamper_detection_hash_recalculation_attack() {
+    let _exclusive_io = exclusive_flush_env();
     let temp_dir = TempDir::new().expect("create temp dir");
     let storage_dir = temp_dir.path().join("parquet");
     let ledger_path = temp_dir.path().join("ledger.jsonl");
@@ -535,6 +614,7 @@ fn test_rfc6962_consistency_proof() {
 
 #[test]
 fn test_batcher_passes_through_parser_raw_hash() {
+    let _exclusive_io = exclusive_flush_env();
     // The whole point of issue #4: a parser-supplied digest must land in
     // Parquet untouched — no second hash, byte-identical output.
     let temp_dir = TempDir::new().expect("create temp dir");
@@ -577,6 +657,7 @@ fn test_batcher_passes_through_parser_raw_hash() {
 
 #[test]
 fn test_batcher_missing_raw_hash_falls_back_to_recompute() {
+    let _exclusive_io = exclusive_flush_env();
     // Old callers construct IncomingLog without a hash (new() leaves it
     // None): flush must hash the bytes itself, exactly as before #4.
     let temp_dir = TempDir::new().expect("create temp dir");
@@ -616,6 +697,7 @@ fn test_batcher_missing_raw_hash_falls_back_to_recompute() {
 
 #[test]
 fn test_batcher_rejects_malformed_hash_with_buffer_intact() {
+    let _exclusive_io = exclusive_flush_env();
     // A garbage supplied hash must fail at the door — before buffering or
     // draining — so the batch stays recoverable and a retry just works.
     let temp_dir = TempDir::new().expect("create temp dir");
@@ -663,6 +745,7 @@ fn test_batcher_rejects_malformed_hash_with_buffer_intact() {
 #[test]
 #[should_panic(expected = "contract violated")]
 fn test_batcher_wrong_digest_trips_debug_contract() {
+    let _exclusive_io = exclusive_flush_env();
     // 64 valid hex chars, but not the hash of this line: format checks pass,
     // so only the debug trust-contract assert catches it (test builds panic).
     let temp_dir = TempDir::new().expect("create temp dir");
@@ -680,4 +763,238 @@ fn test_batcher_wrong_digest_trips_debug_contract() {
         .push(IncomingLog::new("cisco", log).with_raw_hash("0".repeat(64)))
         .expect("format-valid push");
     let _ = batcher.flush();
+}
+
+#[test]
+fn test_fault_post_parquet_pre_sync_leaves_no_ledger_line() {
+    // Crash between the Parquet write and its sync: the block file is on
+    // disk but the ledger must stay silent — a line without a synced block
+    // behind it would be a proof pointing at nothing.
+    let _exclusive_io = exclusive_flush_env();
+    let (temp_dir, mut batcher) = scratch_batcher(1_000, 5_000);
+    let ledger_path = temp_dir.path().join("ledger.jsonl");
+
+    for log in generate_logs(3) {
+        batcher.push(IncomingLog::new("cisco", log)).expect("push");
+    }
+    let _fault = FaultEnv::set("ULPF_FAULT_POST_PARQUET_PRE_SYNC");
+    batcher
+        .flush()
+        .expect_err("injected fault must abort the flush");
+    drop(_fault);
+
+    // Parquet landed; the ledger never heard about it.
+    assert!(temp_dir.path().join("parquet/block_00000.parquet").exists());
+    assert_no_orphan_ledger_lines(&ledger_path);
+    assert!(
+        BatchAccumulator::load_ledger_entries(&ledger_path)
+            .unwrap_or_default()
+            .is_empty(),
+        "no ledger line may precede its synced block"
+    );
+
+    // Recovery is a plain retry: the next flush anchors cleanly.
+    batcher
+        .push(IncomingLog::new("cisco", generate_logs(1)[0].clone()))
+        .expect("push");
+    let flush = batcher.flush().expect("flush").expect("flushed");
+    assert!(flush.parquet_path.exists());
+    assert_no_orphan_ledger_lines(&ledger_path);
+}
+
+#[test]
+fn test_fault_pre_ledger_sync_keeps_parquet_durable_without_entry() {
+    // Crash after the Parquet sync but before the ledger append: durable
+    // block, still no entry. Same invariant, later kill point.
+    let _exclusive_io = exclusive_flush_env();
+    let (temp_dir, mut batcher) = scratch_batcher(1_000, 5_000);
+    let ledger_path = temp_dir.path().join("ledger.jsonl");
+
+    for log in generate_logs(4) {
+        batcher
+            .push(IncomingLog::new("paloalto", log))
+            .expect("push");
+    }
+    let _fault = FaultEnv::set("ULPF_FAULT_PRE_LEDGER_SYNC");
+    batcher
+        .flush()
+        .expect_err("injected fault must abort the flush");
+    drop(_fault);
+
+    assert!(temp_dir.path().join("parquet/block_00000.parquet").exists());
+    assert_no_orphan_ledger_lines(&ledger_path);
+
+    batcher
+        .push(IncomingLog::new("paloalto", generate_logs(1)[0].clone()))
+        .expect("push");
+    let flush = batcher.flush().expect("flush").expect("flushed");
+    let report =
+        verify_block_with_ledger(&flush.parquet_path, &ledger_path).expect("verify retried block");
+    assert!(report.is_valid, "post-crash retry must verify clean");
+    assert_no_orphan_ledger_lines(&ledger_path);
+}
+
+#[test]
+fn test_fsync_pair_cost_is_logged_and_tiny() {
+    // The durable pair reports its own cost so the flush thread can log it:
+    // crash safety must stay in the noise next to a millisecond ingest
+    // budget. Generous bound (50 ms) — spinning disks and loaded CI exist —
+    // but a regression into the hundreds of ms fails loudly here.
+    let _exclusive_io = exclusive_flush_env();
+    let (_temp_dir, mut batcher) = scratch_batcher(1_000, 5_000);
+
+    for log in generate_logs(10) {
+        batcher.push(IncomingLog::new("cisco", log)).expect("push");
+    }
+    let flush = batcher.flush().expect("flush").expect("flushed");
+    assert!(
+        flush.fsync_micros < 50_000,
+        "fsync pair took {} µs — durability must stay cheap",
+        flush.fsync_micros
+    );
+}
+
+#[test]
+fn test_cumulative_chain_passes_on_clean_prefix() {
+    // Three anchored blocks: the cumulative chain (S_0 ⊂ S_1 ⊂ S_2) must
+    // verify pair by pair, with nothing skipped.
+    let _exclusive_io = exclusive_flush_env();
+    let (temp_dir, mut batcher) = scratch_batcher(5, 60_000);
+    let ledger_path = temp_dir.path().join("ledger.jsonl");
+
+    for log in generate_logs(12) {
+        batcher.push(IncomingLog::new("cisco", log)).expect("push");
+    }
+    batcher.flush().expect("tail flush").expect("flushed");
+
+    let report = ulpf_integrity::proof::check_ledger_consistency(&ledger_path)
+        .expect("consistency audit runs");
+    assert_eq!(report.blocks_checked, 3);
+    assert_eq!(report.pairs_checked, 2);
+    assert_eq!(report.pairs_passed, 2);
+    assert_eq!(report.skipped_missing_files, 0);
+    assert!(report.overall_valid);
+    // Cumulative sizes grow by exactly one block each step.
+    assert_eq!(report.pairs[0].prev_size, 5);
+    assert_eq!(report.pairs[0].curr_size, 10);
+    assert_eq!(report.pairs[1].prev_size, 10);
+    assert_eq!(report.pairs[1].curr_size, 12);
+}
+
+#[test]
+fn test_cumulative_chain_detects_rewritten_block() {
+    // Rewrite the middle block's bytes without touching the ledger: its
+    // pair verdicts must fail while the untouched pair still passes — the
+    // chain localizes the rewrite instead of just saying "something broke".
+    let _exclusive_io = exclusive_flush_env();
+    let (temp_dir, mut batcher) = scratch_batcher(5, 60_000);
+    let ledger_path = temp_dir.path().join("ledger.jsonl");
+
+    for log in generate_logs(12) {
+        batcher.push(IncomingLog::new("cisco", log)).expect("push");
+    }
+    batcher.flush().expect("tail flush").expect("flushed");
+
+    let victim = temp_dir.path().join("parquet/block_00001.parquet");
+    let mut records = read_parquet_file(&victim).expect("read victim");
+    records[2].raw_log.push_str(" REWRITTEN BY ADVERSARY");
+    write_records_to_parquet(&victim, &records, ParquetCompression::Snappy).expect("rewrite");
+
+    let report = ulpf_integrity::proof::check_ledger_consistency(&ledger_path)
+        .expect("consistency audit runs");
+    assert_eq!(report.blocks_checked, 3);
+    assert_eq!(report.pairs_checked, 2);
+    assert!(
+        !report.overall_valid,
+        "rewritten block must break the chain"
+    );
+    assert!(
+        report.pairs.iter().all(|p| !p.passed || p.blocks_valid),
+        "no pair touching the rewritten block may pass"
+    );
+    assert_eq!(
+        report.pairs.iter().filter(|p| p.passed).count(),
+        0,
+        "every pair touches block 1 here, so none may pass"
+    );
+}
+
+#[test]
+fn test_cumulative_chain_stops_at_first_missing_file() {
+    // Delete the middle block: the walk ends at the gap (contiguous prefix
+    // only) and everything from the gap on counts as skipped — never as
+    // silently dropped.
+    let _exclusive_io = exclusive_flush_env();
+    let (temp_dir, mut batcher) = scratch_batcher(5, 60_000);
+    let ledger_path = temp_dir.path().join("ledger.jsonl");
+
+    for log in generate_logs(12) {
+        batcher.push(IncomingLog::new("cisco", log)).expect("push");
+    }
+    batcher.flush().expect("tail flush").expect("flushed");
+    std::fs::remove_file(temp_dir.path().join("parquet/block_00001.parquet"))
+        .expect("delete middle block");
+
+    let report = ulpf_integrity::proof::check_ledger_consistency(&ledger_path)
+        .expect("consistency audit runs");
+    assert_eq!(report.blocks_checked, 1);
+    assert_eq!(report.pairs_checked, 0);
+    assert_eq!(report.skipped_missing_files, 2);
+    assert!(!report.overall_valid);
+}
+
+#[test]
+fn test_prove_leaf_anchored_outcomes() {
+    // prove_leaf against a scratch block: clean leaf verifies, tampered
+    // leaf does not, OOB errors, and a block with no ledger entry still
+    // returns printable JSON flagged for exit 2.
+    let _exclusive_io = exclusive_flush_env();
+    let (temp_dir, mut batcher) = scratch_batcher(1_000, 5_000);
+    let ledger_path = temp_dir.path().join("ledger.jsonl");
+
+    for log in generate_logs(8) {
+        batcher.push(IncomingLog::new("cisco", log)).expect("push");
+    }
+    let flush = batcher.flush().expect("flush").expect("flushed");
+
+    let ok = ulpf_integrity::proof::prove_leaf(&flush.parquet_path, 3, &ledger_path)
+        .expect("clean prove runs");
+    assert!(!ok.no_ledger_entry);
+    assert!(ok.output.verified);
+    assert_eq!(ok.output.block_id, 0);
+    assert_eq!(ok.output.tree_size, 8);
+    assert!(ok.output.ledger_merkle_root.is_some());
+    assert_eq!(
+        ok.output.calculated_merkle_root,
+        ok.output.ledger_merkle_root.clone().unwrap()
+    );
+
+    // Tamper the bytes in place: the audit path no longer reaches the
+    // anchored root, but the JSON still prints (exit 2, not exit 1).
+    let mut records = read_parquet_file(&flush.parquet_path).expect("read");
+    records[3].raw_log.push_str(" TAMPERED");
+    write_records_to_parquet(&flush.parquet_path, &records, ParquetCompression::Snappy)
+        .expect("rewrite");
+    let bad = ulpf_integrity::proof::prove_leaf(&flush.parquet_path, 3, &ledger_path)
+        .expect("tampered prove still returns JSON");
+    assert!(!bad.output.verified);
+
+    // Out-of-bounds leaf is a usage error.
+    ulpf_integrity::proof::prove_leaf(&flush.parquet_path, 8, &ledger_path)
+        .expect_err("leaf == tree_size must error");
+
+    // A block the ledger never heard of: full JSON, flagged no-entry.
+    let orphan = ulpf_integrity::proof::prove_leaf(
+        &flush.parquet_path,
+        0,
+        std::path::Path::new("/nonexistent-ledger.jsonl"),
+    );
+    assert!(orphan.is_err(), "unreadable ledger is exit 1, not exit 2");
+    let empty_ledger = temp_dir.path().join("empty.jsonl");
+    std::fs::write(&empty_ledger, "").expect("empty ledger");
+    let missing = ulpf_integrity::proof::prove_leaf(&flush.parquet_path, 0, &empty_ledger)
+        .expect("missing entry still returns JSON");
+    assert!(missing.no_ledger_entry);
+    assert!(!missing.output.verified);
+    assert!(missing.output.ledger_merkle_root.is_none());
 }

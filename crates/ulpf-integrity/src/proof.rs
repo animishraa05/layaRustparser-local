@@ -53,6 +53,7 @@ pub struct InclusionProofOutput {
 /// The printable proof plus whether its block has any ledger entry at all.
 /// A missing entry is not a usage error — the JSON is still complete
 /// (`ledger_merkle_root: null`, `verified: false`) and the caller exits 2.
+#[derive(Debug)]
 pub struct ProveOutcome {
     pub output: InclusionProofOutput,
     pub no_ledger_entry: bool,
