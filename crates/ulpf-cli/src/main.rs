@@ -142,6 +142,16 @@ struct IngestArgs {
     /// Mutex<DrainMiner> contention across workers)
     #[arg(long, default_value_t = default_parse_workers())]
     parse_workers: usize,
+
+    /// Max lines a parse worker grabs per queue pop (default: auto =
+    /// batch_size / parse_workers, floored at 1). The old behavior popped a
+    /// full batch_size per wake, so one worker batch-stole everything at low
+    /// volume — ~2 of N workers engaged, per-worker DrainMiners partitioned
+    /// history, and small rare-shape bursts could go surge-silent on a worker
+    /// with no baseline. A small chunk spreads shares across workers; pass an
+    /// explicit value to A/B tune mutex churn vs spread at high rates.
+    #[arg(long)]
+    pop_chunk: Option<usize>,
 }
 
 #[derive(Args, Debug)]
@@ -327,7 +337,30 @@ fn validate_ingest_args(args: &IngestArgs) -> Result<()> {
              no worker would ever drain the ingest queue"
         );
     }
+    // An explicit zero pop chunk would make every pop return empty and park
+    // all workers in their 1 ms idle sleep with a full queue in front of them.
+    if args.pop_chunk == Some(0) {
+        anyhow::bail!(
+            "--pop-chunk must be greater than 0 (got 0): \
+             workers would pop nothing and never drain the ingest queue"
+        );
+    }
     Ok(())
+}
+
+/// Max lines a parse worker takes per queue grab. Explicit `--pop-chunk`
+/// wins; otherwise a small fixed grab (8) so a low-volume burst splits
+/// across workers instead of one worker batch-stealing the whole queue per
+/// wake. Measured on 8 workers / 64-line burst: chunk 1000 or 125 (the old
+/// full-batch behavior and `batch/workers`) engages 1/8; chunk 16 engages
+/// 4/8; chunk 8 engages 5-8/8 and chunk 4 engages 8/8, all lossless. 8 is the
+/// middle: full spread with half the queue-mutex traffic of 4 (still
+/// negligible — one uncontended lock per 8 events). Pure for unit tests.
+fn resolve_pop_chunk(args: &IngestArgs) -> usize {
+    match args.pop_chunk {
+        Some(n) => n.max(1),
+        None => 8,
+    }
 }
 
 /// Run the live ingest pipeline: sockets → bounded queue → OCSF parse →
@@ -370,6 +403,14 @@ async fn run_ingest(args: IngestArgs) -> Result<()> {
         "  Parse Workers     : {} std threads (TieredPipeline each, ring {})",
         args.parse_workers,
         (10_000 / args.parse_workers).max(1),
+    );
+    println!(
+        "  Pop Chunk         : {} msgs/grab{}",
+        resolve_pop_chunk(&args),
+        match args.pop_chunk {
+            Some(_) => " (--pop-chunk)",
+            None => " (auto)",
+        },
     );
     println!(
         "  Flush Channel     : depth {} (workers * batch_size * 2)",
@@ -497,6 +538,13 @@ async fn run_ingest(args: IngestArgs) -> Result<()> {
         }
     });
 
+    // Per-worker parsed counters: the engagement gauge for the reporter.
+    // Cumulative (parsed > 0 = engaged) — at low volume a batch-stealing
+    // worker leaves the rest at zero, which is exactly the skew this watches.
+    let worker_parsed: Vec<Arc<AtomicU64>> = (0..args.parse_workers)
+        .map(|_| Arc::new(AtomicU64::new(0)))
+        .collect();
+
     // Spawn Stats Reporter
     let total_ing_stats = total_ingested.clone();
     let total_parsed_stats = total_parsed.clone();
@@ -506,6 +554,7 @@ async fn run_ingest(args: IngestArgs) -> Result<()> {
     let flush_depth_stats = flush_depth.clone();
     let flush_dropped_stats = flush_dropped.clone();
     let flush_dropped_bytes_stats = flush_dropped_bytes.clone();
+    let worker_parsed_stats = worker_parsed.clone();
 
     tokio::spawn(async move {
         let mut last_check = Instant::now();
@@ -530,10 +579,14 @@ async fn run_ingest(args: IngestArgs) -> Result<()> {
             } else {
                 0.0
             };
+            let engaged = worker_parsed_stats
+                .iter()
+                .filter(|c| c.load(Ordering::Relaxed) > 0)
+                .count();
 
             println!(
-                "\x1b[32m[ULPF LIVE]\x1b[0m Ingest: \x1b[1;37m{:>7.0} EPS\x1b[0m | Total: \x1b[1;37m{:>8}\x1b[0m | Normalized OCSF: \x1b[1;32m{:>8}\x1b[0m | Blocks Anchored: \x1b[1;35m{:>4}\x1b[0m | Anomalies: \x1b[1;33m{:>3}\x1b[0m | Queue: \x1b[1;37m{:>5} msgs / {:>8} bytes\x1b[0m | Dropped: \x1b[1;31m{} ({} bytes)\x1b[0m | Pushed: \x1b[1;37m{}\x1b[0m Blocked: \x1b[1;37m{}\x1b[0m FlushQ: \x1b[1;37m{}/{}\x1b[0m",
-                eps, current, parsed, blocks, anomalies, qs.current_len, qs.queued_bytes, dropped, dropped_bytes, qs.pushed, qs.blocked, flush_depth_stats.load(Ordering::Relaxed), flush_capacity
+                "\x1b[32m[ULPF LIVE]\x1b[0m Ingest: \x1b[1;37m{:>7.0} EPS\x1b[0m | Total: \x1b[1;37m{:>8}\x1b[0m | Normalized OCSF: \x1b[1;32m{:>8}\x1b[0m | Blocks Anchored: \x1b[1;35m{:>4}\x1b[0m | Anomalies: \x1b[1;33m{:>3}\x1b[0m | Queue: \x1b[1;37m{:>5} msgs / {:>8} bytes\x1b[0m | Dropped: \x1b[1;31m{} ({} bytes)\x1b[0m | Pushed: \x1b[1;37m{}\x1b[0m Blocked: \x1b[1;37m{}\x1b[0m FlushQ: \x1b[1;37m{}/{}\x1b[0m | Workers: \x1b[1;37m{}/{}\x1b[0m",
+                eps, current, parsed, blocks, anomalies, qs.current_len, qs.queued_bytes, dropped, dropped_bytes, qs.pushed, qs.blocked, flush_depth_stats.load(Ordering::Relaxed), flush_capacity, engaged, worker_parsed_stats.len()
             );
 
             last_check = now;
@@ -603,11 +656,14 @@ async fn run_ingest(args: IngestArgs) -> Result<()> {
     // tasks + spawn_blocking), each owning a TieredPipeline BY VALUE. Never
     // Arc<TieredPipeline>: sharing would reintroduce Mutex<DrainMiner>
     // contention across workers. Parse never performs flush work.
+    // The pop chunk is deliberately much smaller than the Merkle batch_size:
+    // a full-batch pop lets one worker batch-steal the whole queue per wake
+    // at low volume, leaving the other workers' DrainMiners with no history.
     let ring_capacity = (10_000 / args.parse_workers).max(1);
-    let pop_chunk = args.batch_size.max(1);
+    let pop_chunk = resolve_pop_chunk(&args);
     let drop_flush = args.drop_on_full;
     let mut worker_handles = Vec::with_capacity(args.parse_workers);
-    for worker_id in 0..args.parse_workers {
+    for (worker_id, my_parsed) in worker_parsed.iter().enumerate() {
         let queue_w = queue.clone();
         let tx_w = flush_tx.clone();
         let parsed_w = total_parsed.clone();
@@ -616,6 +672,7 @@ async fn run_ingest(args: IngestArgs) -> Result<()> {
         let dropped_bytes_w = flush_dropped_bytes.clone();
         let depth_w = flush_depth.clone();
         let shutdown_w = parse_shutdown.clone();
+        let my_parsed_w = my_parsed.clone();
         worker_handles.push(
             std::thread::Builder::new()
                 .name(format!("ulpf-parse-{worker_id}"))
@@ -641,6 +698,7 @@ async fn run_ingest(args: IngestArgs) -> Result<()> {
                             }
                             let (event, anomaly) = pipeline.process_live(raw_str);
                             parsed_w.fetch_add(1, Ordering::Relaxed);
+                            my_parsed_w.fetch_add(1, Ordering::Relaxed);
                             if let Some(alert) = anomaly {
                                 anomalies_w.fetch_add(1, Ordering::Relaxed);
                                 if alert.severity == AlertSeverity::High
@@ -755,6 +813,10 @@ async fn run_ingest(args: IngestArgs) -> Result<()> {
     let qs = queue.stats();
     let dropped = qs.dropped + flush_dropped.load(Ordering::Relaxed);
     let dropped_bytes = qs.dropped_bytes + flush_dropped_bytes.load(Ordering::Relaxed);
+    let engaged = worker_parsed
+        .iter()
+        .filter(|c| c.load(Ordering::Relaxed) > 0)
+        .count();
     let tail_note = if dropped == 0 {
         "tail batch flushed losslessly.".to_string()
     } else {
@@ -764,11 +826,13 @@ async fn run_ingest(args: IngestArgs) -> Result<()> {
         )
     };
     println!(
-        "\n\x1b[1;32m[ULPF SHUTDOWN]\x1b[0m Ingest: {} | Parsed: {} | Blocks: {} | Anomalies: {} | Queue: {} msgs / {} bytes (peak {} bytes) | Pushed: {} Blocked: {} | Dropped: {} ({} bytes) \u{2014} {}",
+        "\n\x1b[1;32m[ULPF SHUTDOWN]\x1b[0m Ingest: {} | Parsed: {} | Blocks: {} | Anomalies: {} | Workers: {}/{} engaged | Queue: {} msgs / {} bytes (peak {} bytes) | Pushed: {} Blocked: {} | Dropped: {} ({} bytes) \u{2014} {}",
         total_ingested.load(Ordering::Relaxed),
         total_parsed.load(Ordering::Relaxed),
         total_blocks.load(Ordering::Relaxed),
         total_anomalies.load(Ordering::Relaxed),
+        engaged,
+        worker_parsed.len(),
         qs.current_len,
         qs.queued_bytes,
         qs.high_water_bytes,
@@ -1561,6 +1625,7 @@ mod tests {
             queue_capacity,
             drop_on_full: false,
             parse_workers: default_parse_workers(),
+            pop_chunk: None,
         }
     }
 
@@ -1597,5 +1662,32 @@ mod tests {
             .unwrap_or(4);
         assert_eq!(default_parse_workers(), expected);
         assert!(ingest_args_with_capacity(50_000).parse_workers >= 1);
+    }
+
+    #[test]
+    fn explicit_zero_pop_chunk_is_rejected() {
+        // A zero pop chunk would return empty batches forever: workers idle
+        // in their 1 ms sleep with a full queue in front of them.
+        let mut args = ingest_args_with_capacity(50_000);
+        args.pop_chunk = Some(0);
+        let err = validate_ingest_args(&args).unwrap_err();
+        assert!(err.to_string().contains("--pop-chunk"));
+    }
+
+    #[test]
+    fn pop_chunk_auto_is_small_and_explicit_wins() {
+        // Auto must stay far below the Merkle batch so one wake cannot
+        // batch-steal the whole low-volume queue (measured: 1/8 workers
+        // engaged at chunk 125 vs 5-8/8 at chunk 8 on a 64-line burst);
+        // explicit wins verbatim, degenerate input still pops >= 1.
+        let mut args = ingest_args_with_capacity(50_000);
+        args.batch_size = 1000;
+        args.parse_workers = 8;
+        args.pop_chunk = None;
+        assert_eq!(resolve_pop_chunk(&args), 8);
+        args.pop_chunk = Some(1000);
+        assert_eq!(resolve_pop_chunk(&args), 1000);
+        args.pop_chunk = Some(0);
+        assert_eq!(resolve_pop_chunk(&args), 1);
     }
 }
