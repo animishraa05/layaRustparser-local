@@ -215,8 +215,8 @@ Allows SQL-like searching, filtering, and paging over columnar Parquet logs with
 ### 3.5 `GET /prove/:block/:leaf` — Merkle Inclusion Proof
 Generates the cryptographic RFC 6962 audit path proving that a specific raw log was batched into the block Merkle root.
 
-> [!WARNING]
-> **Forensic Stub Status**: This endpoint is intentionally a contract stub under Issue #12 criteria. Default calls return `501 Not Implemented`. While passing `?live=true` performs live RFC 6962 audit path reconstruction, full production-grade proof verification UI workflows are scheduled for Issue #14. Frontend teams must handle `501` gracefully.
+> [!NOTE]
+> **#5 Complete — Ledger-Anchored Proofs**: Since `[integrity/M] Ledger fsync + prove/consistency CLI (#5)`, the `?live=true` path rebuilds the RFC 6962 tree and verifies the audit path against the **ledger-anchored root** (previously it verified against the just-recomputed tree root, which was trivially true). The bare default still returns `501 Not Implemented` — full production-grade proof verification UI workflows are scheduled for Issue #14. Frontend teams must handle `501` gracefully.
 
 - **Method**: `GET`
 - **Path**: `/prove/{block}/{leaf}`
@@ -228,7 +228,7 @@ Generates the cryptographic RFC 6962 audit path proving that a specific raw log 
 {
   "error": "Not Implemented",
   "code": 501,
-  "message": "Merkle inclusion proof endpoint is stubbed pending completion of #5 ([integrity/M] Ledger fsync + prove/consistency CLI). Pass '?live=true' to execute live RFC 6962 audit path computation.",
+  "message": "Merkle inclusion proof endpoint defaults to 501; ledger-anchored proofs landed in #5. Pass '?live=true' to execute live RFC 6962 audit path computation.",
   "block_id": 1,
   "leaf_index": 0
 }
