@@ -426,7 +426,11 @@ impl TieredPipeline {
 
             // Pinned parse order: native → registry → lossless (promotes on success)
             let activity = self.parse_pinned(raw, sig_hash);
-            let anomaly = tier1_accounting.then(|| cluster_res.anomaly).flatten();
+            let anomaly = if tier1_accounting {
+                cluster_res.anomaly
+            } else {
+                None
+            };
             return (activity, anomaly);
         }
 
@@ -441,7 +445,11 @@ impl TieredPipeline {
         // Pinned parse order on first sight too: the old path went straight to
         // lossless here, leaving the first line of every new cluster unparsed.
         let activity = self.parse_pinned(raw, sig_hash);
-        let anomaly = tier1_accounting.then(|| cluster_res.anomaly).flatten();
+        let anomaly = if tier1_accounting {
+            cluster_res.anomaly
+        } else {
+            None
+        };
         (activity, anomaly)
     }
 

@@ -1883,6 +1883,7 @@ dependencies = [
  "bytes",
  "chrono",
  "clap",
+ "crossbeam-channel",
  "flate2",
  "hex",
  "http-body-util",
