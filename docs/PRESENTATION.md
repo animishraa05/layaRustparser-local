@@ -48,6 +48,7 @@
 
 #### 1-Click Plug-and-Play Onboarding
 * **Air-Gapped Operation:** No internet connection or cloud API required.
+* **New vendor live in 3 commands** — sample file → `ulpf onboard` → hot-load via `POST /onboard`. Full operator procedure: `docs/ONBOARDING_RUNBOOK.md`.
 * **Heuristic / Local SLM Synthesizer:** Analyzes 3–5 sample lines of an unknown vendor log, discovers field boundaries, synthesizes strict non-greedy regexes with named groups, and maps them to OCSF fields.
 * **Automated Validation Harness:** Pre-flight tests the synthesized parser against 20 sample variations; once 100% validated, hot-loads into the running engine with zero downtime.
 

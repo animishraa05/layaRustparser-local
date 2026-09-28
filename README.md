@@ -114,11 +114,11 @@ cargo test --workspace --no-fail-fast
 | b | Extract and parse source-specific attributes | yes | zero-copy extractors (ASA/FortiGate/PAN-OS/pfSense/Suricata/CEF) — **mean field accuracy 100%** on core & full ([rulers](docs/SCORECARDS.md#how-every-metric-is-measured-the-rulers)) |
 | c | Normalize fields into a common event taxonomy | yes | OCSF 1.3 `NetworkActivity` 4001 — **100% VCA** on core, adversarial-vendor-match, full |
 | d | Maintain traceability between normalized and original events | yes | UUIDv7 `event_id` + SHA-256 digest on every event; `inspect` demo (quick start 6) |
-| e | Plug-and-play onboarding of new log sources | yes | `ulpf onboard` — 3–5 sample lines → validated parser spec, zero network (quick start 7) |
+| e | Plug-and-play onboarding of new log sources | yes | `ulpf onboard` — 3–5 sample lines → validated parser spec, zero network (quick start 7, full procedure: [`docs/ONBOARDING_RUNBOOK.md`](docs/ONBOARDING_RUNBOOK.md)) |
 | f | Unified visibility across enterprise environments | yes | 5 vendor families → uniform OCSF JSON + Parquet schema ([data locations](#data-locations--programmatic-access)) |
 | g | Efficient SIEM and Data Lake integration | yes | Parquet WORM blocks, queryable via DuckDB/pandas ([snippet](#data-locations--programmatic-access)) |
 | h | AI/ML-ready security and operational analytics | yes | **32 Drain templates from 224,657 lines (4,312× compression)** — pre-clustered feature IDs ([scorecards](docs/SCORECARDS.md)) |
-| i | Reduced parser development effort | yes | sample file → parser spec in **ms**, not days (quick start 7) |
+| i | Reduced parser development effort | yes | sample file → parser spec in **ms**, not days (quick start 7, [`docs/ONBOARDING_RUNBOOK.md`](docs/ONBOARDING_RUNBOOK.md)) |
 | j | Deployable in an air-gapped network | yes | single self-contained binaries, **zero** outbound calls anywhere in the runtime path |
 | k | Packaged in a container for platform independence (target < 35 MB) | partial | binary **18.6 MB, within the 35 MB target** (`ls -la target/release/ulpf`); container slim-down in progress — roadmap P10.7 |
 
@@ -167,6 +167,7 @@ cargo build --release
 
 # 7. Air-gapped onboarding of an unseen format (3–5 sample lines, no internet)
 ./target/release/ulpf onboard --sample sample_new_firewall.log --vendor juniper --model srx --out data/parsers
+# Full operator procedure (collect samples → validate % → hot-load → verify): docs/ONBOARDING_RUNBOOK.md
 
 # 8. End-to-end scripted demo (writes to scratch data/demo/, never touches fixtures)
 bash scripts/run_demo.sh

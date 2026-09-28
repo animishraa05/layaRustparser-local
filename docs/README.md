@@ -4,6 +4,7 @@
 | :--- | :--- | :--- |
 | [`ARCHITECTURE_FINAL.md`](ARCHITECTURE_FINAL.md) | **Canonical architecture.** Subsystem-by-subsystem walkthrough: original proposal → why it fails in practice → what we built. **Read this first.** | Everyone, judges |
 | [`DEMO.md`](DEMO.md) | 2-minute video script + terminal timeline. Run via `scripts/run_demo.sh`. | Demo / video owner |
+| [`ONBOARDING_RUNBOOK.md`](ONBOARDING_RUNBOOK.md) | **Operator how-to: new firewall → parsed output in 3 commands.** Collect samples, run `ulpf onboard`, read the validation %, hot-load via `POST /onboard`, verify. Worked example included. | SOC operator, demo owner |
 | [`PRESENTATION.md`](PRESENTATION.md) | 5-slide technical pitch + deliverables checklist. | Pitch owner |
 | [`reference/Ulpf-proposal.pdf`](reference/Ulpf-proposal.pdf) | Original proposal document. Historical context only — implementation overruled it where noted in `ARCHITECTURE_FINAL.md`. | Curious |
 | [`archive/`](archive/) | Superseded docs (stale 2-tier spec, overlapping dossiers). **Do not cite.** Kept for history. | Nobody |
