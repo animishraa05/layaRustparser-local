@@ -25,6 +25,10 @@ Each metric below shows how it is graded: the exact definition, the line in [`cr
 
 † **About the old name "Macro F1":** this number is the mean of five exact-match field accuracies (`evaluator.rs:1970`), never a precision/recall F1 — the label is retired in code and every re-runnable report. The frozen holdout report (`eval_holdout_report.md`, P8) and the historical logs (`OVERHAUL_PLAN.md`, `FULL_DATASET_RESULTS.md`) still carry the old label; read it as mean field accuracy.
 
+### Benchmark ritual (the stopwatch rules — condensed)
+
+Latency/throughput rows are only comparable when measured the same way: idle machine (`uptime` 1-min loadavg < `nproc`), `--release` binary, pinned `--threads` (same value both engines), median of 3 runs per corpus, always the same-run baseline-vs-tiered ratio — absolute µs never stands alone (same corpus seen 73 µs idle → 1,104 µs busy). Noise band: same-run ratios within ~10%; absolute µs not comparable across machines. Small-corpus tiered throughput 0.82–0.97× is **designed** (Drain bookkeeping the pure baseline skips; tiers pay off at scale — 2.15× at 224k), not chased. Ritual enforced by [`scripts/bench.sh`](../scripts/bench.sh); canonical text in `AGENTS.md` Gotchas.
+
 ## 4.1 Core corpus — 1,720 committed fixture lines · [`eval_hardcore_report.md`](../eval_hardcore_report.md)
 
 | Metric | Baseline | 3-Tier | Delta |

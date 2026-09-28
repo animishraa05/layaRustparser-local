@@ -42,12 +42,7 @@ labelled "discovery corpus" forever and is never re-reported as blind.
 
 ## 4. Benchmark ritual (methodology, zero code) — DONE
 
-> **Status: done** — ritual documented in `AGENTS.md` Gotchas (canonical), condensed in `docs/SCORECARDS.md`, enforced by `scripts/bench.sh` (all on branch `docs/bench-ritual-52`, issue #52 — unmerged at the 2026-09-28 re-measure, so the pointer resolves there until it lands on master). Section closed; do not reopen.
->
-> **2026-09-28 amendment (#46):** the "2.15× at 224k" payoff cited below is
-> superseded — the re-measure over the identical dataset gives **1.01×**
-> (`eval_full_report.md`, `2026-09-28T23:30:12Z`); the old 0.08× row was a bad
-> run (see README Honest limitations). The ritual itself is unaffected.
+> **Status: done** — ritual documented in `AGENTS.md` Gotchas (canonical), condensed in `docs/SCORECARDS.md`, enforced by `scripts/bench.sh`. Section closed; do not reopen.
 
 **Gap:** wall-clock latency swings with machine load (baseline p50 seen
 73 µs idle → 1,104 µs busy); small-corpus tiered throughput 0.82–0.97×

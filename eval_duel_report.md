@@ -49,3 +49,5 @@
 - **Mixed-action clusters remain (finding, not tuned away):** R2 fuzzed (vanilla 17, 3-tier 10) — a relay prefix or mid-line CR keeps a space in the payload, the tokenizer then fuses the record into one token, and the buried action word never reaches the anchor vocabulary, so cross-action merges stay possible. The scorecard gate `Action inviolability (ALLOW/DENY)` is the bare-token canary (a weaker, pre-existing check); corpus-wide disposition purity is this duel's stricter, newly measured metric. No tokenizer or threshold was changed in response to this result — such a fix must be validated on data the code has never seen.
 - The frozen holdout corpus is never read by the duel — holdout inputs stay untouched.
 - Speed is out of scope: `ulpf scorecard` already reports latency and throughput for both engines.
+
+> **Benchmark ritual:** predates the ritual doc (`AGENTS.md` Gotchas, issue #52) — duel methodology defined in-report (§Metrics/§Fixtures); speed out of scope here, latency/throughput rows live under `ulpf scorecard`.
