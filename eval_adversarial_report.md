@@ -64,3 +64,5 @@
 | **Disposition Resolution Accuracy** | 93.53% | 93.53% | Security Invariant |
 | **Lossless Cryptographic SHA-256** | 100.00% | 100.00% | 100.0% Required |
 
+
+> **Benchmark ritual:** predates the ritual doc (`AGENTS.md` Gotchas, issue #52) — header records release binary, threads, duration; absolute µs not comparable across machines, cite same-run ratios.

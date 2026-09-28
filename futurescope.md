@@ -40,7 +40,9 @@ validate on a **newly generated fuzz corpus (new seed)** — R2 stays
 labelled "discovery corpus" forever and is never re-reported as blind.
 **Done when:** fresh-corpus mixed clusters drop with GA non-regressing.
 
-## 4. Benchmark ritual (methodology, zero code)
+## 4. Benchmark ritual (methodology, zero code) — DONE
+
+> **Status: done** — ritual documented in `AGENTS.md` Gotchas (canonical), condensed in `docs/SCORECARDS.md`, enforced by `scripts/bench.sh`. Section closed; do not reopen.
 
 **Gap:** wall-clock latency swings with machine load (baseline p50 seen
 73 µs idle → 1,104 µs busy); small-corpus tiered throughput 0.82–0.97×
