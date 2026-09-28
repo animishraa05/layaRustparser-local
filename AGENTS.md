@@ -39,7 +39,7 @@ cargo test -p ulpf-ai drain_                       # substring filter across tha
 
 # Build + evaluate both engines (must be release — see Gotchas)
 cargo build --release
-./target/release/ulpf evaluate --engine all --duration 3 --threads 16 --samples 10000 --out eval_hardcore_report.md
+./target/release/ulpf evaluate --engine all --duration 3 --threads 16 --samples 10000 --out docs/benchmarks/eval_hardcore_report.md
 ```
 
 **The two `-A` clippy flags are required.** Plain `cargo clippy -- -D warnings` fails on `field_reassign_with_default` (ulpf-core) and `too_many_arguments`.
@@ -70,4 +70,4 @@ Performance gates when touching hot path or miner: p50 < 5.0 µs, LRU hit rate >
 
 **New OCSF class:** define in `ulpf-core/src/schema/ocsf.rs` (must carry `metadata` with `raw_data`, `raw_hash`, `event_id`, `ingest_time`); update Arrow schema in `ulpf-integrity/src/storage.rs` if new top-level columns are needed.
 
-**Benchmark regression check:** whenever touching the parsing hot path, Drain miner, or pipeline, run the `evaluate --engine all` command above and compare against `eval_hardcore_report.md` (regenerating it is expected; it's tracked).
+**Benchmark regression check:** whenever touching the parsing hot path, Drain miner, or pipeline, run the `evaluate --engine all` command above and compare against `docs/benchmarks/eval_hardcore_report.md` (regenerating it is expected; it's tracked).

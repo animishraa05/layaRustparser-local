@@ -6,6 +6,6 @@ target/
 .opencode/
 .idea/
 .vscode/
-eval_hardcore_report.md
+docs/benchmarks/eval_hardcore_report.md
 *.orig
 *.rej

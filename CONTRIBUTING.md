@@ -45,7 +45,7 @@ Performance gates when touching parse/miner/pipeline: p50 < 5.0 µs, LRU hit rat
 Action Inviolability 100%, Grouping Accuracy > 90%. Check with:
 
 ```bash
-./target/release/ulpf evaluate --engine all --duration 3 --threads 16 --samples 10000 --out eval_hardcore_report.md
+./target/release/ulpf evaluate --engine all --duration 3 --threads 16 --samples 10000 --out docs/benchmarks/eval_hardcore_report.md
 ```
 
 ## Gotchas that have bitten us (see `AGENTS.md` for the full list)

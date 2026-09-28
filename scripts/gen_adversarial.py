@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""ULPF P7 deterministic corpus generator (plan: OVERHAUL_PLAN.md §3 P7).
+"""ULPF P7 deterministic corpus generator (plan: docs/archive/OVERHAUL_PLAN.md §3 P7).
 
 Produces, from templates + seeded mutations (stdlib only, zero network):
 

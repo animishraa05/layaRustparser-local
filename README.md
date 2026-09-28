@@ -21,8 +21,8 @@ A high-performance, vendor-agnostic, containerized, strictly **air-gapped Univer
 - **Lossless provenance.** Raw bytes are stored byte-for-byte in `raw_log`, `raw_hash = SHA-256(raw)` checks out on **all 224,657** full-scale lines, and every event gets a UUIDv7 `event_id`.
 - **RFC 6962 Merkle WORM.** The append-only `ledger.jsonl` roots every Parquet block. Flip one byte and `ulpf verify` exits **2**; the live run passed **186/186** blocks.
 - **One schema out: OCSF 1.3.** `NetworkActivity` (class 4001) for **6 formats today** (Cisco ASA, FortiGate, PAN-OS, pfSense, Suricata, CEF; [matrix](docs/WHY_ULPF.md#format--vendor-support-matrix)).
-- **Action inviolability enforced on anchor tokens.** `ALLOW`/`PERMIT`/`ACCEPT` can never land in the same template cluster as `DENY`/`DROP`/`BLOCK`/`REJECT`; corpus-wide disposition purity is measured strictly in the [duel report](eval_duel_report.md).
-- **Beats vanilla Drain 4–0.** The committed [duel](eval_duel_report.md) runs both engines over probe, fuzzed, BGL and Thunderbird rounds; 3-tier wins grouping accuracy on **all four** (e.g. 98.41% vs 71.73% on fuzzed input).
+- **Action inviolability enforced on anchor tokens.** `ALLOW`/`PERMIT`/`ACCEPT` can never land in the same template cluster as `DENY`/`DROP`/`BLOCK`/`REJECT`; corpus-wide disposition purity is measured strictly in the [duel report](docs/benchmarks/eval_duel_report.md).
+- **Beats vanilla Drain 4–0.** The committed [duel](docs/benchmarks/eval_duel_report.md) runs both engines over probe, fuzzed, BGL and Thunderbird rounds; 3-tier wins grouping accuracy on **all four** (e.g. 98.41% vs 71.73% on fuzzed input).
 - **4,312× template compression.** 224,657 lines collapse to **32** Drain templates (baseline: 137,986) with template accuracy still at 100% — a ready-made feature table for any SIEM/ML system.
 - **Air-gapped for real.** Zero outbound calls, no telemetry, no model downloads. One static **18.6 MB** binary (requirement: < 35 MB), plus Docker.
 
@@ -39,8 +39,8 @@ All figures measured on the same machine (Linux x86_64, rustc 1.96.0), release b
 | **Adversarial** (fuzzed) | 757 | 96.30 / 98.41 / **100** / 97.15 / 93.53 % | 105.47 → **4.29 µs** (−95.9%) | 827,260 → 742,672 EPS (0.90×) | 382 ¹ |
 | **Holdout** (frozen, one-shot) | 200 | 40 ² / 100 / **100** / 80 / 0 ² % | 74.47 → **5.63 µs** (−92.4%) | 1,721,640 → 154,514 EPS (0.09×) ³ | — |
 
-¹ All 382 are **ground-truth-side mutation damage** — the fuzzer intentionally rewrote IP/port bytes; both engines produce *identical* mismatch counts (1,512 wrong fields each), so the delta is zero. Details: [`eval_adversarial_report.md`](eval_adversarial_report.md) §1b.
-² Holdout vendors are intentionally unseen; the baseline recognises **0** — tiered recognises **40%** on structure alone and scores **320 GT fields correct vs baseline's 0**. Disposition is **0% on both engines by construction of the experiment**: the holdout's vendors have no extractor, so every event resolves to `Unknown` disposition (160/200 lines *do* carry labels — 102 Allowed / 58 Blocked — and both engines fail them all). Known gap, tracked as P10.2 vendor expansion. Details: [`eval_holdout_report.md`](eval_holdout_report.md) §1b–§3.
+¹ All 382 are **ground-truth-side mutation damage** — the fuzzer intentionally rewrote IP/port bytes; both engines produce *identical* mismatch counts (1,512 wrong fields each), so the delta is zero. Details: [`eval_adversarial_report.md`](docs/benchmarks/eval_adversarial_report.md) §1b.
+² Holdout vendors are intentionally unseen; the baseline recognises **0** — tiered recognises **40%** on structure alone and scores **320 GT fields correct vs baseline's 0**. Disposition is **0% on both engines by construction of the experiment**: the holdout's vendors have no extractor, so every event resolves to `Unknown` disposition (160/200 lines *do* carry labels — 102 Allowed / 58 Blocked — and both engines fail them all). Known gap, tracked as P10.2 vendor expansion. Details: [`eval_holdout_report.md`](docs/benchmarks/eval_holdout_report.md) §1b–§3.
 ³ Holdout is a small (200-line) one-shot frozen audit — its throughput ratio is not a performance signal; latency percentiles there are (p50 −92.4%).
 
 **Invariants held on every corpus, both engines:**
@@ -79,12 +79,12 @@ cargo build --release
 
 # Accuracy scorecards — regenerates the non-frozen committed reports in ~90s
 # (the holdout report is frozen at P8 and deliberately not re-runnable)
-./target/release/ulpf evaluate --engine all --duration 3 --threads 16 --samples 10000 --out eval_hardcore_report.md --corpus core --data-dir data/raw
-./target/release/ulpf evaluate --engine all --duration 3 --threads 16 --samples 10000 --out eval_adversarial_report.md --corpus adversarial --data-dir data/raw --audit-dump audit_adv_dump.jsonl
+./target/release/ulpf evaluate --engine all --duration 3 --threads 16 --samples 10000 --out docs/benchmarks/eval_hardcore_report.md --corpus core --data-dir data/raw
+./target/release/ulpf evaluate --engine all --duration 3 --threads 16 --samples 10000 --out docs/benchmarks/eval_adversarial_report.md --corpus adversarial --data-dir data/raw --audit-dump audit_adv_dump.jsonl
 
 # Full scale (dataset regenerable byte-for-byte, seed 777):
 python3 scripts/gen_adversarial.py --full 25000
-./target/release/ulpf evaluate --engine all --duration 3 --threads 16 --samples 10000 --out eval_full_report.md --corpus core --data-dir data/raw/full
+./target/release/ulpf evaluate --engine all --duration 3 --threads 16 --samples 10000 --out docs/benchmarks/eval_full_report.md --corpus core --data-dir data/raw/full
 
 # Integrity demo (exit 0 = valid, 2 = tampered; block_0 is the deliberate tamper)
 ./target/release/ulpf verify --file data/parquet/block_00001.parquet --ledger data/ledger.jsonl
@@ -208,7 +208,7 @@ bash scripts/run_demo.sh
 Known gaps, each one measured:
 
 - **Adversarial GA: 98.41% vs baseline 100%** (−1.59 pt) — deny-class template variants cluster together on the fuzz corpus; Action Inviolability itself stays 100% (no ALLOW/DENY ever merges). Fix tracked as a stretch item (deny-class sub-clustering).
-- **Corpus-wide mixed-action clusters on fuzzed lines (duel finding).** On R2, 10 of 81 clusters (vanilla: 17 of 53) still hold both dispositions: relay/CR-prefixed records keep a space, the tokenizer fuses the CSV/JSON into one token, and the buried action word never reaches the anchor vocabulary. The 100% inviolability gate is the bare-token canary; root cause and scope are disclosed in [`eval_duel_report.md`](eval_duel_report.md) — deliberately **not tuned away** on the corpus that exposed it (a fix must be validated on unseen data).
+- **Corpus-wide mixed-action clusters on fuzzed lines (duel finding).** On R2, 10 of 81 clusters (vanilla: 17 of 53) still hold both dispositions: relay/CR-prefixed records keep a space, the tokenizer fuses the CSV/JSON into one token, and the buried action word never reaches the anchor vocabulary. The 100% inviolability gate is the bare-token canary; root cause and scope are disclosed in [`eval_duel_report.md`](docs/benchmarks/eval_duel_report.md) — deliberately **not tuned away** on the corpus that exposed it (a fix must be validated on unseen data).
 - **Holdout disposition = 0/0** — the frozen holdout's vendors are *unseen* (no extractor exists for them), so both engines emit `Unknown` disposition on all 200 lines even though 160 carry ground-truth labels. It's an honest zero, not a skipped grade; vendor expansion (P10.2) is the fix.
 - **Small-corpus throughput ratio ≈ 0.90–0.97×** — on 757–1,720 line corpora the tiered engine pays Drain bookkeeping that the pure baseline skips; at 224k lines throughput reaches parity (**1.01×**). The tiers' consistent win is **latency** (−92% to −96% p50 at every scale), not throughput.
 - **Throughput/latency are load-sensitive** — same-code reruns swing baseline p50 between ~73 µs (idle) and ~1,104 µs (busy). Accuracy is deterministic; timing is not. Reports embed timestamps for this reason. The 2026-09-28 re-measure caught this live: one adversarial run halved baseline throughput (428,899 vs ~830k EPS), and one full-scale run doubled baseline p50 (196.49 vs ~107 µs) — median-of-3 absorbs both, which is why the ritual requires it.
@@ -220,20 +220,29 @@ Known gaps, each one measured:
 
 ## Documentation map
 
+Full index: [`docs/README.md`](docs/README.md) (every doc, one row each). Short version:
+
 | Document | What it gives you |
 | :--- | :--- |
-| [`docs/WHY_ULPF.md`](docs/WHY_ULPF.md) | The problem, shipper comparison, vendor support matrix, one real line end to end |
-| [`docs/SCORECARDS.md`](docs/SCORECARDS.md) | Metric rulers, per-corpus scorecards, latency spectrum, forensic guarantees |
-| [`FULL_DATASET_RESULTS.md`](FULL_DATASET_RESULTS.md) | 224,657-line end-to-end run: evals, live 186-block chain, onboarding, what we found wrong |
-| [`OVERHAUL_PLAN.md`](OVERHAUL_PLAN.md) | The P1–P10 measurement-first overhaul plan + per-phase execution log |
-| [`AGENTS.md`](AGENTS.md) | Contributor handbook: invariants, crate map, verification gate, gotchas, extension recipes |
-| [`docs/archive/ARCHITECTURE.md`](docs/archive/ARCHITECTURE.md) | High-assurance architecture spec: data plane, integrity plane, math-grade reasoning |
-| [`docs/diagrams/`](docs/diagrams/) | Graphviz `.dot` sources + rendered `.png` for every diagram (regenerate with `dot -Tpng -Gdpi=144`) |
-| [`docs/archive/SIH_EVALUATION_DOSSIER.md`](docs/archive/SIH_EVALUATION_DOSSIER.md) | Requirement-by-requirement defense dossier (a–k) + out-of-scope honesty section |
-| [`docs/archive/SIMPLIFIED_EXPLANATION_AND_BENCHMARKS.md`](docs/archive/SIMPLIFIED_EXPLANATION_AND_BENCHMARKS.md) | Plain-language guide (airport analogy) + benchmark deep-dive for non-experts |
 | [`docs/ARCHITECTURE_FINAL.md`](docs/ARCHITECTURE_FINAL.md) | Implemented system vs original proposal, subsystem by subsystem |
-| [`docs/PRESENTATION.md`](docs/PRESENTATION.md) · [`docs/DEMO.md`](docs/DEMO.md) | 5-slide presentation script · 2-minute demo video script · [printable PDFs in `docs/`](docs/) |
-| [`eval_hardcore_report.md`](eval_hardcore_report.md) · [`eval_full_report.md`](eval_full_report.md) · [`eval_adversarial_report.md`](eval_adversarial_report.md) · [`eval_holdout_report.md`](eval_holdout_report.md) · [`eval_duel_report.md`](eval_duel_report.md) | The committed accuracy scorecards + the vanilla-vs-3-tier duel this README cites |
+| [`docs/SCORECARDS.md`](docs/SCORECARDS.md) | Metric rulers, per-corpus scorecards, latency spectrum, forensic guarantees |
+| [`docs/CONTRACTS.md`](docs/CONTRACTS.md) · [`docs/openapi.yaml`](docs/openapi.yaml) | Serve REST contract + mock fixtures · machine-readable version |
+| [`docs/ONBOARDING_RUNBOOK.md`](docs/ONBOARDING_RUNBOOK.md) | New firewall → parsed output in 3 commands |
+| [`docs/WHY_ULPF.md`](docs/WHY_ULPF.md) | The problem, shipper comparison, vendor support matrix, one real line end to end |
+| [`docs/PRESENTATION.md`](docs/PRESENTATION.md) · [`docs/DEMO.md`](docs/DEMO.md) | 5-slide pitch script · 2-minute demo script · [printable PDFs in `docs/releases/`](docs/releases/) |
+| [`docs/benchmarks/`](docs/benchmarks/) | Committed scorecards: `eval_hardcore_report.md` (core) · `eval_full_report.md` (224k) · `eval_adversarial_report.md` (fuzz) · `eval_holdout_report.md` (frozen) · `eval_duel_report.md` (vanilla-vs-3-tier) |
+| [`FULL_DATASET_RESULTS.md`](FULL_DATASET_RESULTS.md) | 224,657-line end-to-end run: evals, live 186-block chain, onboarding, what we found wrong |
+| [`futurescope.md`](futurescope.md) | Measured future gaps, in priority order |
+| [`AGENTS.md`](AGENTS.md) · [`CONTRIBUTING.md`](CONTRIBUTING.md) | Contributor handbook · team workflow |
+| [`data/fixtures/api/`](data/fixtures/api/) | Sample mock JSON for the serve contract |
+| [`data/raw/duel/README.md`](data/raw/duel/README.md) | Frozen duel inputs + ground-truth provenance |
+| [`docs/archive/`](docs/archive/) | Superseded, do not cite: [`OVERHAUL_PLAN.md`](docs/archive/OVERHAUL_PLAN.md) (P1–P10 log, not a spec) · [`ARCHITECTURE.md`](docs/archive/ARCHITECTURE.md) · [`SIH_EVALUATION_DOSSIER.md`](docs/archive/SIH_EVALUATION_DOSSIER.md) · [`SIMPLIFIED_EXPLANATION_AND_BENCHMARKS.md`](docs/archive/SIMPLIFIED_EXPLANATION_AND_BENCHMARKS.md) |
+| [`docs/releases/`](docs/releases/) | Frozen submission PDFs: [`ULPF_Architecture_and_Benchmarks_Guide.pdf`](docs/releases/ULPF_Architecture_and_Benchmarks_Guide.pdf) · [`ULPF_SIH_Evaluation_Dossier_BW.pdf`](docs/releases/ULPF_SIH_Evaluation_Dossier_BW.pdf) · [`README.md`](docs/releases/README.md) (regen recipe) |
+| [`docs/reference/Ulpf-proposal.pdf`](docs/reference/Ulpf-proposal.pdf) | Original proposal — overruled where `ARCHITECTURE_FINAL.md` says so |
+| Repo config | CI and forms, each filed once in `docs/README.md`: [`.github/workflows/`](.github/workflows/) · [`.github/ISSUE_TEMPLATE/`](.github/ISSUE_TEMPLATE/) · [`pull_request_template.md`](.github/pull_request_template.md) · [`dependabot.yml`](.github/dependabot.yml) · [`.coderabbit.yaml`](.coderabbit.yaml) · [`docker-compose.yml`](docker-compose.yml) |
+| Frontend notes | Dashboard-track docs, each filed once in `docs/README.md`: [`frontend/laya-frontend/README.md`](frontend/laya-frontend/README.md) and sibling notes |
+| [`docs/diagrams/`](docs/diagrams/) | Graphviz `.dot` sources + rendered `.png` (regenerate with `dot -Tpng -Gdpi=144`) |
+| [`remainingStuff.md`](remainingStuff.md) | Retired pointer — open work lives in GitHub issues |
 | [`scripts/run_demo.sh`](scripts/run_demo.sh) | One-command non-destructive demo |
 
 ## Project status & roadmap

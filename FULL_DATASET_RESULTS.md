@@ -42,11 +42,11 @@ python3 scripts/gen_adversarial.py --full 25000  # seed 777, distinct from 1337/
 ```bash
 ./target/release/ulpf evaluate --corpus core --data-dir data/raw/full \
   --engine all --duration 3 --threads 16 --samples 10000 \
-  --out eval_full_report.md --audit-dump audit_full_dump.jsonl
+  --out docs/benchmarks/eval_full_report.md --audit-dump audit_full_dump.jsonl
 ```
 
 `--corpus core` now loads `data/raw/full/gt.jsonl` when present, so all grading is
-**sidecar-authoritative** (224,657 overrides). Full table in `eval_full_report.md`.
+**sidecar-authoritative** (224,657 overrides). Full table in `docs/benchmarks/eval_full_report.md`.
 
 | Metric | Baseline | 3-Tier | Verdict |
 | :--- | ---: | ---: | :--- |
@@ -250,7 +250,7 @@ python3 scripts/gen_adversarial.py --full 25000       # dataset (seed 777, deter
 # Evaluation (release build, repo root cwd)
 ./target/release/ulpf evaluate --corpus core --data-dir data/raw/full --engine all \
   --duration 3 --threads 16 --samples 10000 \
-  --out eval_full_report.md --audit-dump audit_full_dump.jsonl
+  --out docs/benchmarks/eval_full_report.md --audit-dump audit_full_dump.jsonl
 
 # Live integrity chain (outputs under data/full_out/, never the tracked fixtures)
 ./target/release/ulpf ingest --udp 127.0.0.1:5141 --tcp 127.0.0.1:5142 \
