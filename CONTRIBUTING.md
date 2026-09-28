@@ -1,6 +1,6 @@
 # Contributing to ULPF
 
-6-person SIH team workflow. Read `AGENTS.md` (invariants + gotchas) and `remainingStuff.md` (who owns what) first.
+6-person SIH team workflow. Read `AGENTS.md` (invariants + gotchas) first, then pick unclaimed work from the [GitHub issue tracker](https://github.com/guptchar/layaRustparser/issues).
 
 ## How work flows (read this before anything else)
 
@@ -30,10 +30,10 @@ Run everything from the repo root: CLI defaults assume `data/raw`, `data/parquet
 ## Branches
 
 - Short-lived `feat/<topic>` or `fix/<topic>` branches, PR to `main`. No direct pushes to `main`.
-- One owner per area (see `remainingStuff.md` §8). Don't touch another owner's hot path without asking.
+- One owner per area (see open issues by `area/*` label). Don't touch another owner's hot path without asking.
 - PRs need: green CI, `cargo fmt` clean, tests for new behavior (RED → GREEN → REFACTOR).
 
-## Verification gate (run in this order, no CI will save you locally)
+## Verification gate (run in this order — CI mirrors this gate; CI is authoritative for mergeability)
 
 ```bash
 cargo clippy --workspace --all-targets -- -A clippy::too_many_arguments -A clippy::field_reassign_with_default -D warnings

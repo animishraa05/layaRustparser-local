@@ -7,6 +7,5 @@ target/
 .idea/
 .vscode/
 eval_hardcore_report.md
-remainingStuff.md
 *.orig
 *.rej
