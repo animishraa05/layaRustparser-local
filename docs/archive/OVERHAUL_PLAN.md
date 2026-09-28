@@ -1,3 +1,5 @@
+> **Historical execution log, not a spec.** This plan ran to completion (P1–P10). Do not implement from it; current docs are `docs/` + `AGENTS.md`.
+
 # ULPF 3-Tier Pipeline Overhaul — Master Plan (parser-lab track)
 
 **Track:** `/home/ani/parser-lab` (independent fork of `/home/ani/parser` @ `9d11d2a`)
