@@ -2,7 +2,7 @@
 
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.96-orange.svg)](https://www.rust-lang.org/)
-[![Tests](https://img.shields.io/badge/tests-124%20passed%20%C2%B7%200%20failed-brightgreen.svg)](#testing--verification-gate)
+[![Tests](https://img.shields.io/badge/tests-CI--gated-brightgreen.svg)](https://github.com/guptchar/layaRustparser/actions/workflows/ci.yml)
 [![Schema](https://img.shields.io/badge/schema-OCSF%201.3-green.svg)](https://schema.ocsf.io/)
 [![Integrity](https://img.shields.io/badge/integrity-RFC%206962%20Merkle-purple.svg)](https://datatracker.ietf.org/doc/html/rfc6962)
 [![Air--Gap](https://img.shields.io/badge/deployment-100%25%20Air--Gapped-red.svg)](#air-gapped-deployment)
@@ -95,7 +95,7 @@ python3 scripts/gen_adversarial.py --full 25000
 
 ## Testing & verification gate
 
-The project has **no CI** — this gate is the *only* automated check, and it runs before every commit:
+CI ([`ci.yml`](.github/workflows/ci.yml), plus [`claim.yml`](.github/workflows/claim.yml) / [`reviewer.yml`](.github/workflows/reviewer.yml) for issue/PR routing) runs the full gate on every PR and on every push that touches code — docs-only pushes (`**.md`, `**.png`, `**.dot`, `docs/**`) skip via `paths-ignore`. The CI badge at the top is the live signal; run the same gate locally before every commit (CI is authoritative for mergeability):
 
 ```bash
 cargo clippy --workspace --all-targets \
@@ -104,7 +104,7 @@ cargo fmt --all -- --check
 cargo test --workspace --no-fail-fast
 ```
 
-**Latest run (2026-09-25): clippy 0 warnings · fmt clean · `124 passed · 0 failed · 1 ignored`.** Coverage: parser field accuracy + byte-exact SHA-256 per vendor, Drain anchor-token inviolability, the vanilla-vs-3-tier duel, tier behaviour, Merkle/tamper/exit-code contracts, CLI smoke tests, evaluator GT grading, air-gapped onboarder. The single `ignored` test is the documented load-sensitive micro-benchmark ([`AGENTS.md`](AGENTS.md) Gotchas).
+**Latest local run (2026-09-29): clippy 0 warnings · fmt clean · `253 passed · 1 failed · 1 ignored`.** The 1 failure is the known load-flaky micro-benchmark below (passes on idle re-run; CI skips it) — not a regression. Coverage: parser field accuracy + byte-exact SHA-256 per vendor, Drain anchor-token inviolability, the vanilla-vs-3-tier duel, tier behaviour, Merkle/tamper/exit-code contracts, CLI smoke tests, evaluator GT grading, air-gapped onboarder. The single `ignored` test is the frozen holdout (`test_holdout_novelty_end_to_end_at_freeze` in `crates/ulpf-ai/tests/ai_tests.rs`, `#[ignore = "holdout frozen until the P8 final freeze"]`) — run once at freeze via `cargo test -p ulpf-ai -- --ignored test_holdout`. The load-sensitive micro-benchmark (`test_classification_sub_microsecond_benchmark`, asserts < 2 µs/classification in a debug build) is **CI-skipped, not ignored** (`--skip` in `ci.yml`) and flakes on busy machines — re-run before assuming breakage ([`AGENTS.md`](AGENTS.md) Gotchas). For a fresh count: `cargo test --workspace --no-fail-fast`.
 
 ## SIH26156 requirements matrix
 
@@ -214,7 +214,7 @@ Known gaps, each one measured:
 - **Full-scale p50 (7.28 µs) is over the 5.0 µs latency gate.** The gate is calibrated on the core corpus, where p50 is 2.88 µs and passes. At 224,657 lines the working set no longer stays cache-resident (still −99.3% vs baseline). The gate stays where it is; the gap is tracked in the roadmap.
 - **UDP socket ceiling ≈ 25–28k EPS/socket** in the live generator path (kernel-bound); the evaluator's in-process numbers are the engine's own capacity.
 - **Container image not yet < 35 MB** — binary requirement met (18.6 MB); distroless/musl slim-down is roadmap P10.7.
-- One test is load-flaky by design (`test_classification_sub_microsecond_benchmark`, `ignored`) — documented in [`AGENTS.md`](AGENTS.md).
+- One test is load-flaky by design (`test_classification_sub_microsecond_benchmark`, CI-skipped via `--skip`, not ignored) — documented in [`AGENTS.md`](AGENTS.md).
 
 ## Documentation map
 
