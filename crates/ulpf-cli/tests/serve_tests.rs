@@ -28,7 +28,7 @@ fn setup_test_state() -> AppState {
         root.join("data/parquet"),
         root.join("data/ledger.jsonl"),
         root.join("data/parsers"),
-        root.join("eval_hardcore_report.md"),
+        root.join("docs/benchmarks/eval_hardcore_report.md"),
     )
 }
 
@@ -276,7 +276,7 @@ async fn test_serve_onboard_safety_and_persistence() {
         root.join("data/parquet"),
         root.join("data/ledger.jsonl"),
         temp_dir.path().to_path_buf(),
-        root.join("eval_hardcore_report.md"),
+        root.join("docs/benchmarks/eval_hardcore_report.md"),
     );
 
     let sample_lines = vec![
@@ -355,7 +355,7 @@ async fn test_serve_tamper_drill_isolation() {
         parquet_dir: root.join("data/parquet"),
         ledger_path: root.join("data/ledger.jsonl"),
         parsers_dir: root.join("data/parsers"),
-        eval_report_path: root.join("eval_hardcore_report.md"),
+        eval_report_path: root.join("docs/benchmarks/eval_hardcore_report.md"),
         scratch_dir: temp_scratch.path().to_path_buf(),
         registry: std::sync::Arc::new(tokio::sync::RwLock::new(
             ulpf_ai::onboarder::DynamicParserRegistry::new(),
@@ -580,7 +580,7 @@ async fn test_serve_onboard_vendor_slug_traversal_sanitization() {
         root.join("data/parquet"),
         root.join("data/ledger.jsonl"),
         temp_dir.path().to_path_buf(),
-        root.join("eval_hardcore_report.md"),
+        root.join("docs/benchmarks/eval_hardcore_report.md"),
     );
     let parsers_dir = state.parsers_dir.clone();
     let app = create_router(state);
@@ -763,7 +763,7 @@ async fn test_serve_state_initialization_deterministic() {
         root.join("data/parquet"),
         root.join("data/ledger.jsonl"),
         temp_dir.path().to_path_buf(),
-        root.join("eval_hardcore_report.md"),
+        root.join("docs/benchmarks/eval_hardcore_report.md"),
     );
 
     let alerts = state.alerts.read().await;
@@ -784,7 +784,7 @@ async fn test_serve_state_initialization_deterministic() {
             root_clone.join("data/parquet"),
             root_clone.join("data/ledger.jsonl"),
             temp_path,
-            root_clone.join("eval_hardcore_report.md"),
+            root_clone.join("docs/benchmarks/eval_hardcore_report.md"),
         );
         assert_eq!(
             s.mock_eps.load(std::sync::atomic::Ordering::Relaxed),
