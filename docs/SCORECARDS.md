@@ -42,8 +42,8 @@ Each metric below shows how it is graded: the exact definition, the line in [`cr
 
 | Metric | Baseline | 3-Tier | Delta |
 | :--- | ---: | ---: | :---: |
-| Throughput | 395,842 EPS | **849,481 EPS** | **2.15×** |
-| Data bandwidth | 77.68 MB/s | **237.26 MB/s** | **3.05×** |
+| Throughput | 995,247 EPS | **1,003,273 EPS** | **1.01×** |
+| Data bandwidth | 265.80 MB/s | **268.42 MB/s** | **1.01×** |
 | VCA / GA / TA / MeanAcc / Disposition | 100 / 100 / 100 / 100 / 100 % | **100 / 100 / 100 / 100 / 100 %** | = (ceiling) |
 | Unique templates | 137,986 | **32** | **4,312× compression** |
 | Sidecar GT (5 field keys) | — | **1,000,000 correct · 0 wrong** | exact match |
@@ -57,7 +57,7 @@ Each metric below shows how it is graded: the exact definition, the line in [`cr
 | GA | 100.00% | 98.41% | −1.59 pt: deny-class variants only (see README limitations) |
 | TA / MeanAcc / Disposition | 100 / 97.15 / 93.53 % | **100** / 97.15 / 93.53 % | parity |
 | Action Inviolability | N/A | **100% preserved** | anchor tokens held under fuzz |
-| GT fields wrong | 1,524 | **1,524 (identical)** | fuzzer-caused; engine delta = 0 |
+| GT fields wrong | 1,512 | **1,512 (identical)** | fuzzer-caused; engine delta = 0 |
 
 ## 4.4 Frozen holdout (unseen vendors, executed once at P8) · [`eval_holdout_report.md`](../eval_holdout_report.md)
 
@@ -77,12 +77,12 @@ Full-scale percentile sweep ([`eval_full_report.md`](../eval_full_report.md) §2
 
 | Percentile | Baseline | 3-Tier | Reduction |
 | :--- | ---: | ---: | ---: |
-| p1 (fastest 1%) | 512.25 µs | **5.97 µs** | −98.8% |
-| **p50 (median)** | 1,104.72 µs | **7.28 µs** | **−99.3%** |
-| p90 | 1,377.28 µs | **8.12 µs** | −99.4% |
-| p99 | 1,510.92 µs | **10.97 µs** | −99.3% |
-| p99.9 | 1,729.33 µs | **14.93 µs** | −99.1% |
-| worst case | 4,328.61 µs | **50.08 µs** | −98.8% |
+| p1 (fastest 1%) | 104.02 µs | **5.16 µs** | −95.0% |
+| **p50 (median)** | 106.67 µs | **6.15 µs** | **−94.2%** |
+| p90 | 139.39 µs | **6.71 µs** | −95.2% |
+| p99 | 165.42 µs | **9.86 µs** | −94.0% |
+| p99.9 | 208.81 µs | **27.54 µs** | −86.8% |
+| worst case | 371.45 µs | **60.66 µs** | −83.7% |
 
 **Template compression** (why a SIEM would care): 224,657 raw lines collapse to **32 Drain templates** (baseline naive-split: 137,986) — a **4,312× reduction** in downstream indexing cost with TA held at 100% (every template still generalizes correctly against its masked line).
 

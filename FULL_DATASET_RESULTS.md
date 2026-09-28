@@ -50,7 +50,7 @@ python3 scripts/gen_adversarial.py --full 25000  # seed 777, distinct from 1337/
 
 | Metric | Baseline | 3-Tier | Verdict |
 | :--- | ---: | ---: | :--- |
-| Throughput (16 threads) | 828,220 EPS | **872,404 EPS** | 1.05× |
+| Throughput (16 threads) | 995,247 EPS | **1,003,273 EPS** | 1.01× |
 | VCA | 100.00% | 100.00% | parity |
 | GA (grouping) | 100.00% | 100.00% | ≥ baseline |
 | TA (template) | 100.00% | 100.00% | ceiling both |
@@ -61,17 +61,39 @@ python3 scripts/gen_adversarial.py --full 25000  # seed 777, distinct from 1337/
 | Recognized / no-panic | 224657/224657 | 224657/224657 | zero aborts |
 | **Audit dump** | 0 | **0** | every line clean |
 | Sidecar GT fields | 1,000,000 correct / **0 wrong** / 123,285 null | same | exact |
-| p50 / p99 / p99.9 (µs) | 81.14 / 158.07 / 227.10 | **7.31 / 10.57 / 18.42** | −91.0% / −93.3% / −91.9% |
+| p50 / p99 / p99.9 (µs) | 106.67 / 165.42 / 208.81 | **6.15 / 9.86 / 27.54** | −94.2% / −94.0% / −86.8% |
 | Unique templates | 137,986 | **32** | **4,312× compression**, strict < |
 
 Tier telemetry at scale: LRU hit **100%**, Drain clusters **15**, Laya async
-dispatches **120** (bounded — diversity scales clusters, not line count).
+dispatches **120** (bounded — diversity scales clusters, not line count;
+console telemetry box of the evaluate run — identical 2026-09-24 and 2026-09-28).
 
-**p50 scale note (honest):** tiered p50 moved 2.46 → 7.31 µs vs the 10.8k run.
-The corpus in RAM grew 9 MB → 62 MB (working set now spills cache; baseline
-p50 grew too, 76 → 81 µs, and this desktop had background load). The tiered
-engine still runs **11× under baseline** at 224k lines; the earlier 2.46 µs
-remains the representative small-corpus figure.
+**p50 scale note (honest):** tiered p50 moved 3.84 → 6.15 µs vs the 1.7k core run
+(2026-09-28 re-measure, same flags both scales). The corpus in RAM grew
+0.6 MB → 62 MB (working set now spills cache; baseline p50 barely moved,
+106.18 → 106.67 µs, because the baseline path is allocation-light per line).
+The tiered engine still runs **17× under baseline latency** at 224k lines;
+the 3.84 µs core figure remains the representative small-corpus number, and
+the number to compare against is always the same-run ratio, never the
+absolute µs.
+
+**2026-09-28 re-measure — the 0.08× row is superseded, not explained away.**
+The 2026-09-25 `eval_full_report.md` row (966,681 → 74,489 EPS, 0.08×) did
+not reproduce: three runs over the byte-identical 224,657-line dataset gave
+tiered **912,249 / 1,003,273 / 930,901 EPS** (ratios 0.84 / 1.01 / 1.26×;
+median run committed, timestamp `2026-09-28T23:30:12Z`). The old figure sits
+12× below the lowest fresh run, and the 2026-09-24 session in §2 above
+(872,404 EPS, 1.05×) brackets it from the other side — two sessions against
+one bad run. Probable mechanism: the evaluator's tiered-throughput path
+shares a single `Arc<TieredPipeline>` (hence one `Arc<Mutex<DrainMiner>>`)
+across all 16 worker threads (`benchmark_tiered_isolated`), while the
+baseline gives every thread its own parser — under load one side of that
+asymmetry collapses while single-threaded p50 sampling (which takes no lock
+contention) still looks healthy, exactly the impossible combo the bad row
+shows (tiered p50 *better* at 47.31 µs, throughput 13× *worse*). Production
+`ingest` gives each parse worker its own pipeline by value, so this ceiling
+is harness-specific, not architectural. The old report file is overwritten,
+not kept alongside: one number per claim.
 
 ---
 
@@ -193,10 +215,13 @@ flush, by design.
   (holdout remains frozen; not regenerated, not re-run post-freeze). The Rust
   source was untouched for the scale re-run — the data-dependent parity test
   re-passed against the 224,657-line corpus (15.8 s).
-- Committed corpora re-validated after the sidecar fix:
+- Committed corpora re-validated after the sidecar fix (2026-09-24 values):
   core **dump 0, all-100, p50 3.30 µs**; adversarial **Action Inviolability 100%,
   GA 98.41 vs baseline 100** (12 `panos_threat` relay/encoding grouping failures,
   deny-class only — zero ALLOW/DENY mixing); holdout **untouched**.
+  Re-measured 2026-09-28 (median-of-3, committed reports): core dump 0,
+  all-100, p50 **3.84 µs**; adversarial inviolability 100%, GA 98.41 vs 100,
+  audit dump **382**; full §2 table above. Holdout still untouched (frozen).
 - Everything deterministic: dataset md5-stable across double runs; audits
   (`audit*_dump.jsonl`) gitignored; `data/raw/full/` + `data/full_out/` gitignored.
 

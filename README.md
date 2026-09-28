@@ -16,7 +16,7 @@ A high-performance, vendor-agnostic, containerized, strictly **air-gapped Univer
 
 **Key capabilities**
 
-- **Zero-copy hot path.** p50 is **2.88 µs**/line on the core corpus, **7.28 µs** at 224k lines (**−96.1% / −99.3%** vs the frozen baseline), **849,481 EPS** at full scale (**2.15×** baseline).
+- **Zero-copy hot path.** p50 is **3.84 µs**/line on the core corpus, **6.15 µs** at 224k lines (**−96.4% / −94.2%** vs the frozen baseline), **1,003,273 EPS** at full scale (**1.01×** baseline — throughput parity, the win is latency).
 - **3-tier decision pipeline.** Tier-1 signature LRU (8,192 entries), Tier-2 Drain template miner with security anchor tokens, Tier-3 Laya triage on a bounded ring that **never blocks ingest** (invariant #5).
 - **Lossless provenance.** Raw bytes are stored byte-for-byte in `raw_log`, `raw_hash = SHA-256(raw)` checks out on **all 224,657** full-scale lines, and every event gets a UUIDv7 `event_id`.
 - **RFC 6962 Merkle WORM.** The append-only `ledger.jsonl` roots every Parquet block. Flip one byte and `ulpf verify` exits **2**; the live run passed **186/186** blocks.
@@ -28,18 +28,18 @@ A high-performance, vendor-agnostic, containerized, strictly **air-gapped Univer
 
 Every accuracy number links to a timestamped report from `ulpf evaluate`, and every table regenerates with one command (see [Reproduce the proof](#reproduce-the-proof)).
 
-## Headline results (fresh, 2026-09-25)
+## Headline results (fresh, 2026-09-28)
 
-All figures measured on the same machine (Linux x86_64, rustc 1.96.0), release build, `--engine all --duration 3 --threads 16`. Reports are committed; timestamps inside them prove freshness (core re-run 2026-09-25, other corpora 2026-09-24).
+All figures measured on the same machine (Linux x86_64, rustc 1.96.0), release build, `--engine all --duration 3 --threads 16`, median of 3 runs per corpus in one cool-state session. Reports are committed; timestamps inside them prove freshness (core/adversarial/full re-measured 2026-09-28; holdout frozen 2026-09-24T09:41:32Z and deliberately not re-run).
 
 | Corpus | Lines | Accuracy (VCA / GA / TA / MeanAcc / Disposition) | p50 Baseline → 3-Tier | Throughput Baseline → 3-Tier | Audit dump |
 | :--- | ---: | :--- | :--- | :--- | :---: |
-| **Core** (committed fixtures) | 1,720 | **100 / 100 / 100 / 100 / 100 %** | 73.19 → **2.88 µs** (−96.1%) | 811,861 → 785,456 EPS (0.97×) | **0** |
-| **Full scale** (regenerable) | **224,657** | **100 / 100 / 100 / 100 / 100 %** | 1,104.72 → **7.28 µs** (−99.3%) | 395,842 → **849,481 EPS (2.15×)** | **0** |
-| **Adversarial** (fuzzed) | 757 | 96.30 / 98.41 / **100** / 97.15 / 93.53 % | 80.56 → **4.14 µs** (−94.9%) | 730,846 → 597,480 EPS (0.82×) | 382 ¹ |
+| **Core** (committed fixtures) | 1,720 | **100 / 100 / 100 / 100 / 100 %** | 106.18 → **3.84 µs** (−96.4%) | 790,662 → 763,813 EPS (0.97×) | **0** |
+| **Full scale** (regenerable) | **224,657** | **100 / 100 / 100 / 100 / 100 %** | 106.67 → **6.15 µs** (−94.2%) | 995,247 → **1,003,273 EPS (1.01×)** | **0** |
+| **Adversarial** (fuzzed) | 757 | 96.30 / 98.41 / **100** / 97.15 / 93.53 % | 105.47 → **4.29 µs** (−95.9%) | 827,260 → 742,672 EPS (0.90×) | 382 ¹ |
 | **Holdout** (frozen, one-shot) | 200 | 40 ² / 100 / **100** / 80 / 0 ² % | 74.47 → **5.63 µs** (−92.4%) | 1,721,640 → 154,514 EPS (0.09×) ³ | — |
 
-¹ All 382 are **ground-truth-side mutation damage** — the fuzzer intentionally rewrote IP/port bytes; both engines produce *identical* mismatch counts (1,524 wrong fields each), so the delta is zero. Details: [`eval_adversarial_report.md`](eval_adversarial_report.md) §1b.
+¹ All 382 are **ground-truth-side mutation damage** — the fuzzer intentionally rewrote IP/port bytes; both engines produce *identical* mismatch counts (1,512 wrong fields each), so the delta is zero. Details: [`eval_adversarial_report.md`](eval_adversarial_report.md) §1b.
 ² Holdout vendors are intentionally unseen; the baseline recognises **0** — tiered recognises **40%** on structure alone and scores **320 GT fields correct vs baseline's 0**. Disposition is **0% on both engines by construction of the experiment**: the holdout's vendors have no extractor, so every event resolves to `Unknown` disposition (160/200 lines *do* carry labels — 102 Allowed / 58 Blocked — and both engines fail them all). Known gap, tracked as P10.2 vendor expansion. Details: [`eval_holdout_report.md`](eval_holdout_report.md) §1b–§3.
 ³ Holdout is a small (200-line) one-shot frozen audit — its throughput ratio is not a performance signal; latency percentiles there are (p50 −92.4%).
 
@@ -69,7 +69,7 @@ Full argument, shipper-by-shipper comparison, the [vendor support matrix](docs/W
 
 Subsystem-by-subsystem account: [`docs/ARCHITECTURE_FINAL.md`](docs/ARCHITECTURE_FINAL.md).
 
-**Why two engines?** The frozen Aho-Corasick **baseline** (`UniversalParser`) is the control; the 3-tier pipeline runs on the same corpora and has to beat it on latency and accuracy at every scale (2.15× EPS at 224k; small-corpus exception noted in [Honest limitations](#honest-limitations)). Every scorecard prints both columns side by side, so no number is graded against itself. Workspace map (5 crates): [`AGENTS.md`](AGENTS.md#crate-map). Metric rulers, per-corpus scorecards, latency spectrum and forensic guarantees: [`docs/SCORECARDS.md`](docs/SCORECARDS.md).
+**Why two engines?** The frozen Aho-Corasick **baseline** (`UniversalParser`) is the control; the 3-tier pipeline runs on the same corpora and has to beat it on latency and accuracy at every scale (~1.0× EPS at 224k — parity on throughput, −94.2% on latency; small-corpus exception noted in [Honest limitations](#honest-limitations)). Every scorecard prints both columns side by side, so no number is graded against itself. Workspace map (5 crates): [`AGENTS.md`](AGENTS.md#crate-map). Metric rulers, per-corpus scorecards, latency spectrum and forensic guarantees: [`docs/SCORECARDS.md`](docs/SCORECARDS.md).
 
 ## Reproduce the proof
 
@@ -80,7 +80,7 @@ cargo build --release
 # Accuracy scorecards — regenerates the non-frozen committed reports in ~90s
 # (the holdout report is frozen at P8 and deliberately not re-runnable)
 ./target/release/ulpf evaluate --engine all --duration 3 --threads 16 --samples 10000 --out eval_hardcore_report.md --corpus core --data-dir data/raw
-./target/release/ulpf evaluate --engine all --duration 3 --threads 16 --samples 10000 --out eval_adversarial_report.md --corpus adversarial --data-dir data/raw
+./target/release/ulpf evaluate --engine all --duration 3 --threads 16 --samples 10000 --out eval_adversarial_report.md --corpus adversarial --data-dir data/raw --audit-dump audit_adv_dump.jsonl
 
 # Full scale (dataset regenerable byte-for-byte, seed 777):
 python3 scripts/gen_adversarial.py --full 25000
@@ -209,9 +209,10 @@ Known gaps, each one measured:
 - **Adversarial GA: 98.41% vs baseline 100%** (−1.59 pt) — deny-class template variants cluster together on the fuzz corpus; Action Inviolability itself stays 100% (no ALLOW/DENY ever merges). Fix tracked as a stretch item (deny-class sub-clustering).
 - **Corpus-wide mixed-action clusters on fuzzed lines (duel finding).** On R2, 10 of 81 clusters (vanilla: 17 of 53) still hold both dispositions: relay/CR-prefixed records keep a space, the tokenizer fuses the CSV/JSON into one token, and the buried action word never reaches the anchor vocabulary. The 100% inviolability gate is the bare-token canary; root cause and scope are disclosed in [`eval_duel_report.md`](eval_duel_report.md) — deliberately **not tuned away** on the corpus that exposed it (a fix must be validated on unseen data).
 - **Holdout disposition = 0/0** — the frozen holdout's vendors are *unseen* (no extractor exists for them), so both engines emit `Unknown` disposition on all 200 lines even though 160 carry ground-truth labels. It's an honest zero, not a skipped grade; vendor expansion (P10.2) is the fix.
-- **Small-corpus throughput ratio ≈ 0.82–0.97×** — on 757–1,720 line corpora the tiered engine pays Drain bookkeeping that the pure baseline skips; at 224k+ lines the tiers pay off (**2.15×**). Latency wins at *every* scale (−92% to −99% p50).
-- **Throughput/latency are load-sensitive** — same-code reruns swing baseline p50 between ~73 µs (idle) and ~1,104 µs (busy). Accuracy is deterministic; timing is not. Reports embed timestamps for this reason.
-- **Full-scale p50 (7.28 µs) is over the 5.0 µs latency gate.** The gate is calibrated on the core corpus, where p50 is 2.88 µs and passes. At 224,657 lines the working set no longer stays cache-resident (still −99.3% vs baseline). The gate stays where it is; the gap is tracked in the roadmap.
+- **Small-corpus throughput ratio ≈ 0.90–0.97×** — on 757–1,720 line corpora the tiered engine pays Drain bookkeeping that the pure baseline skips; at 224k lines throughput reaches parity (**1.01×**). The tiers' consistent win is **latency** (−92% to −96% p50 at every scale), not throughput.
+- **Throughput/latency are load-sensitive** — same-code reruns swing baseline p50 between ~73 µs (idle) and ~1,104 µs (busy). Accuracy is deterministic; timing is not. Reports embed timestamps for this reason. The 2026-09-28 re-measure caught this live: one adversarial run halved baseline throughput (428,899 vs ~830k EPS), and one full-scale run doubled baseline p50 (196.49 vs ~107 µs) — median-of-3 absorbs both, which is why the ritual requires it.
+- **Full-scale p50 (6.15 µs) is over the 5.0 µs latency gate.** The gate is calibrated on the core corpus, where p50 is 3.84 µs and passes. At 224,657 lines the working set no longer stays cache-resident (still −94.2% vs baseline). The gate stays where it is; the gap is tracked in the roadmap.
+- **The 2026-09-25 full-scale 0.08× row (74,489 EPS) was a bad run, superseded 2026-09-28.** Re-running the identical 224,657-line dataset three times gave tiered 912,249 / 1,003,273 / 930,901 EPS (0.84 / 1.01 / 1.26×) — the old figure sits 12× below the lowest fresh run, and the 2026-09-24 session independently measured 1.05×. Likely cause: load-side collapse on the evaluator's tiered-throughput path, which funnels 16 threads through one shared `Arc<Mutex<DrainMiner>>` (production `ingest` gives each worker its own pipeline, so this ceiling is harness-specific). Details: [`FULL_DATASET_RESULTS.md`](FULL_DATASET_RESULTS.md) §2.
 - **UDP socket ceiling ≈ 25–28k EPS/socket** in the live generator path (kernel-bound); the evaluator's in-process numbers are the engine's own capacity.
 - **Container image not yet < 35 MB** — binary requirement met (18.6 MB); distroless/musl slim-down is roadmap P10.7.
 - One test is load-flaky by design (`test_classification_sub_microsecond_benchmark`, `ignored`) — documented in [`AGENTS.md`](AGENTS.md).
@@ -240,7 +241,7 @@ Known gaps, each one measured:
 
 **In progress (P10):** universal wire formats (LEEF, generic KV/JSON/XML, RFC5424 SD) · vendor expansion (~10, ISRO-relevant) · multi-source measurement + Mapping-Coverage metric · container < 35 MB (P10.7) · submission artifacts (readme/pitch/video) · deny-class GA stretch (P10.9, droppable).
 
-**Performance gates** (checked whenever hot path/miner changes): p50 < 5.0 µs *(core-corpus: 2.88 µs passes; full-scale 7.28 µs is over the line, tracked above)* · LRU hit rate > 90% · Action Inviolability 100% · grouping accuracy > 90%.
+**Performance gates** (checked whenever hot path/miner changes): p50 < 5.0 µs *(core-corpus: 3.84 µs passes; full-scale 6.15 µs is over the line, tracked above)* · LRU hit rate > 90% · Action Inviolability 100% · grouping accuracy > 90%.
 
 ## License
 
