@@ -191,8 +191,8 @@
       RFC 6962 Merkle Tree (Certificate Transparency)
     </div>
     <div class="meta-item">
-      <strong>Verified Peak Throughput</strong>
-      2,717,398 EPS (16 CPU Threads)
+      <strong>Measured Peak Throughput</strong>
+      1,003,273 EPS tiered (16 threads, 2026-09-28)
     </div>
   </div>
 </div>
@@ -211,9 +211,11 @@
 </p>
 <p>
   Traditional log processors (like Logstash, Fluentd, or Python scripts) are too slow, consume gigabytes of RAM, and drop packets during cyberattacks. Worse still, a malicious adversary with root access can open the log archive files on disk and secretly edit or delete records to hide their tracks.
+  <br><br>
+  <strong>How to reproduce every number below:</strong> <code>cargo build --release</code>, then <code>./target/release/ulpf evaluate --engine all --duration 3 --threads 16 --samples 10000 --out report.md</code> on an idle machine. Full method: <code>scripts/bench.sh</code>.
 </p>
 <div class="callout">
-  <strong>The ULPF Solution:</strong> Built natively in 100% pure Rust, ULPF ingests heterogeneous perimeter streams, normalizes them in real time into the standard <strong>OCSF 1.3 <code>NetworkActivity</code></strong> schema at <strong>2.71 Million Events/Second</strong>, and seals every log into a cryptographic <strong>RFC 6962 Merkle Tree</strong> so that tampering is mathematically impossible without immediate detection.
+  <strong>The ULPF Solution:</strong> Built natively in 100% pure Rust, ULPF ingests heterogeneous perimeter streams, normalizes them in real time into the standard <strong>OCSF 1.3 <code>NetworkActivity</code></strong> schema at a <strong>measured 1,003,273 EPS</strong> (3-tier engine, 224,657-line corpus, <code>eval_full_report.md</code>, 2026-09-28), and seals every log into a cryptographic <strong>RFC 6962 Merkle Tree</strong> so that tampering is mathematically impossible without immediate detection. The pre-build proposal targeted multi-million EPS; ~1.0M EPS is the highest value measured so far.
 </div>
 
 <h2>2. Original Proposal (<code>Ulpf -1.pdf</code>) vs. Our Production Reality</h2>
@@ -306,9 +308,9 @@
 
 <div class="page-break"></div>
 
-<h2>3. The Science Behind the Benchmark: How Did We Hit 2.71 Million EPS?</h2>
+<h2>3. The Science Behind the Benchmark: How We Measured ~1.0 Million EPS</h2>
 <p>
-  During the empirical benchmark on an Intel Core i5-12500H laptop, ULPF normalized <strong>8,154,686 events in 3.00 seconds</strong>, achieving an aggregate throughput of <strong>2,717,398 EPS</strong> across 16 threads (169,837 EPS per thread) with <strong>< 1.8 microseconds total latency</strong>.
+  On a 16-thread Linux box (release build, idle machine), ULPF normalized a <strong>224,657-line corpus</strong> at <strong>1,003,273 EPS</strong> (3-tier engine; baseline 995,247 EPS in the same run, <strong>1.01×</strong>), or <strong>~62,700 EPS per thread</strong>. Median per-event latency was <strong>6.15 µs</strong> tiered vs 106.67 µs baseline (−94.2%). Source: <code>eval_full_report.md</code> (2026-09-28). Smaller corpora measure 763,813 EPS tiered at p50 3.84 µs (<code>eval_hardcore_report.md</code>, 1,720 lines, 2026-09-28) and 742,672 EPS at p50 4.29 µs (<code>eval_adversarial_report.md</code>, 757 lines, 2026-09-28). Timing rows swing with machine load; accuracy rows (100% VCA/GA/TA on core and full scale) do not.
 </p>
 
 <!-- SVG Diagram 2: Throughput & Latency Bar Charts -->
@@ -336,9 +338,9 @@
     <text x="222" y="125" font-size="8.5" font-weight="700" fill="#1d4ed8" text-anchor="middle">100k</text>
     <text x="222" y="194" font-size="8" fill="#1d4ed8" text-anchor="middle">NTRO Goal</text>
     
-    <!-- ULPF: 2.71M -->
+    <!-- ULPF: 1.00M measured -->
     <rect x="270" y="45" width="45" height="135" fill="#16a34a" rx="2"/>
-    <text x="292" y="40" font-size="9" font-weight="800" fill="#15803d" text-anchor="middle">2,717,398</text>
+    <text x="292" y="40" font-size="9" font-weight="800" fill="#15803d" text-anchor="middle">1,003,273</text>
     <text x="292" y="194" font-size="8" font-weight="700" fill="#15803d" text-anchor="middle">ULPF</text>
 
     <!-- Right Chart: Latency -->
@@ -357,9 +359,9 @@
     <text x="557" y="147" font-size="8.5" font-weight="700" fill="#b45309" text-anchor="middle">45 µs</text>
     <text x="557" y="194" font-size="8" fill="#475569" text-anchor="middle">Go / Fluentbit</text>
 
-    <!-- ULPF: 1.8us -->
+    <!-- ULPF: 6.2us measured p50 -->
     <rect x="620" y="177" width="55" height="3" fill="#16a34a" rx="2"/>
-    <text x="647" y="171" font-size="9" font-weight="800" fill="#15803d" text-anchor="middle">1.8 µs</text>
+    <text x="647" y="171" font-size="9" font-weight="800" fill="#15803d" text-anchor="middle">6.2 µs</text>
     <text x="647" y="194" font-size="8" font-weight="700" fill="#15803d" text-anchor="middle">ULPF (Rust)</text>
   </svg>
 </div>
@@ -498,7 +500,7 @@
 
 <h2>6. Key Takeaways for Evaluators & Defense Operations</h2>
 <ul>
-  <li><strong>Extreme Throughput:</strong> Scales linearly across all CPU cores to hit <strong>2.71 Million EPS</strong> on a single laptop CPU, vastly surpassing the 100k EPS requirement.</li>
+  <li><strong>High Throughput:</strong> Measures <strong>1,003,273 EPS</strong> (3-tier, 16 threads) on the 224,657-line corpus — 10× the 100k EPS requirement. Source: <code>eval_full_report.md</code> (2026-09-28). The proposal's multi-million EPS figure remains a <strong>target</strong>, not a measurement.</li>
   <li><strong>Open Standard:</strong> 100% compliant with <strong>OCSF 1.3 <code>NetworkActivity</code> (Class 4001)</strong>, eliminating vendor lock-in.</li>
   <li><strong>Cryptographic Proof of Custody:</strong> Implements the <strong>RFC 6962 Certificate Transparency</strong> standard, ensuring log tampering is mathematically provable in digital forensics.</li>
   <li><strong>True Air-Gap Portability:</strong> 100% self-contained in a lean Docker container (< 35 MB) with zero external internet dependencies, cloud APIs, or heavy model weights.</li>

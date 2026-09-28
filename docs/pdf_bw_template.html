@@ -177,7 +177,7 @@
     </div>
     <div class="meta-item">
       <strong>Peak Measured Throughput</strong>
-      2,717,398 EPS (Intel Core i5 Laptop)
+      1,003,273 EPS tiered (16 threads, 2026-09-28)
     </div>
   </div>
 </div>
@@ -197,7 +197,9 @@
 <div class="callout">
   <strong>Why Traditional SIEMs Fail:</strong> Tools like Logstash or Python scripts move strings through 7 to 10 distinct memory copies, triggering constant Garbage Collector pauses. They choke at ~5,000 to 45,000 EPS. Worse, traditional databases allow a root attacker to alter an IP address on disk with <strong>zero mathematical trace</strong>.
   <br><br>
-  <strong>The ULPF Solution:</strong> Built in pure Rust, ULPF normalizes heterogeneous perimeter streams into <strong>OCSF 1.3 <code>NetworkActivity</code></strong> at <strong>2,717,398 EPS</strong> on a standard laptop CPU, and seals every log into an <strong>RFC 6962 Merkle Tree</strong> so that tampering is mathematically impossible without immediate detection.
+  <strong>The ULPF Solution:</strong> Built in pure Rust, ULPF normalizes heterogeneous perimeter streams into <strong>OCSF 1.3 <code>NetworkActivity</code></strong> at a <strong>measured 1,003,273 EPS</strong> (3-tier engine, 224,657-line corpus, <code>eval_full_report.md</code>, 2026-09-28), and seals every log into an <strong>RFC 6962 Merkle Tree</strong> so that tampering is mathematically impossible without immediate detection. The pre-build proposal targeted multi-million EPS; ~1.0M EPS is the highest value measured so far.
+  <br><br>
+  <strong>How to reproduce every number below:</strong> <code>cargo build --release</code>, then <code>./target/release/ulpf evaluate --engine all --duration 3 --threads 16 --samples 10000 --out report.md</code> on an idle machine. Full method: <code>scripts/bench.sh</code>.
 </div>
 
 <h2>2. Side-by-Side Comparison: Theoretical PDF (<code>Ulpf -1.pdf</code>) vs. Production Rust Implementation</h2>
@@ -288,9 +290,9 @@
 
 <div class="page-break"></div>
 
-<h2>3. The Science Behind the Benchmark: How Did We Hit 2,717,398 EPS?</h2>
+<h2>3. The Science Behind the Benchmark: How We Measured ~1.0 Million EPS</h2>
 <p>
-  During the empirical benchmark on an Intel Core i5-12500H laptop, ULPF normalized <strong>8,154,686 events in 3.00 seconds</strong>, achieving an aggregate throughput of <strong>2,717,398 EPS</strong> across 16 threads (169,837 EPS per thread) with <strong>< 1.8 microseconds total latency</strong>.
+  On a 16-thread Linux box (release build, idle machine), ULPF normalized a <strong>224,657-line corpus</strong> at <strong>1,003,273 EPS</strong> (3-tier engine; baseline 995,247 EPS in the same run, <strong>1.01×</strong>), or <strong>~62,700 EPS per thread</strong>. Median per-event latency was <strong>6.15 µs</strong> tiered vs 106.67 µs baseline (−94.2%). Source: <code>eval_full_report.md</code> (2026-09-28). Smaller corpora measure 763,813 EPS tiered at p50 3.84 µs (<code>eval_hardcore_report.md</code>, 1,720 lines, 2026-09-28) and 742,672 EPS at p50 4.29 µs (<code>eval_adversarial_report.md</code>, 757 lines, 2026-09-28). Timing rows swing with machine load; accuracy rows (100% VCA/GA/TA on core and full scale) do not.
 </p>
 
 <!-- SVG Diagram 2: Throughput & Latency Bar Charts in Monochrome -->
@@ -318,9 +320,9 @@
     <text x="222" y="115" font-size="8" font-weight="700" fill="#000000" text-anchor="middle">100k</text>
     <text x="222" y="179" font-size="8" font-weight="700" fill="#000000" text-anchor="middle">NTRO Goal</text>
     
-    <!-- ULPF: 2.71M -->
+    <!-- ULPF: 1.00M measured -->
     <rect x="270" y="42" width="45" height="123" fill="#000000" stroke="#000000" stroke-width="1.5"/>
-    <text x="292" y="37" font-size="9" font-weight="900" fill="#000000" text-anchor="middle">2,717,398</text>
+    <text x="292" y="37" font-size="9" font-weight="900" fill="#000000" text-anchor="middle">1,003,273</text>
     <text x="292" y="179" font-size="8" font-weight="900" fill="#000000" text-anchor="middle">ULPF (Rust)</text>
 
     <!-- Right Chart: Latency -->
@@ -339,9 +341,9 @@
     <text x="557" y="135" font-size="8.5" font-weight="700" fill="#000000" text-anchor="middle">45 µs</text>
     <text x="557" y="179" font-size="8" font-weight="600" fill="#000000" text-anchor="middle">Go/Fluentbit</text>
 
-    <!-- ULPF: 1.8us -->
+    <!-- ULPF: 6.2us measured p50 -->
     <rect x="620" y="162" width="55" height="3" fill="#000000" stroke="#000000" stroke-width="1.5"/>
-    <text x="647" y="157" font-size="9" font-weight="900" fill="#000000" text-anchor="middle">1.8 µs</text>
+    <text x="647" y="157" font-size="9" font-weight="900" fill="#000000" text-anchor="middle">6.2 µs</text>
     <text x="647" y="179" font-size="8" font-weight="900" fill="#000000" text-anchor="middle">ULPF (Rust)</text>
   </svg>
 </div>
@@ -523,7 +525,7 @@
   </li>
   <li>
     <strong>Multi-Datacenter Distributed Clustering:</strong><br>
-    <em>Status:</em> ULPF operates as a high-performance single-node engine achieving 2.71M EPS on a single CPU. Scaling beyond 50 Million EPS across distributed Points of Presence (PoPs) is planned for Phase 2 via Maglev/HAProxy consistent-hashing load balancers.
+    <em>Status:</em> ULPF operates as a high-performance single-node engine with <strong>1,003,273 EPS measured</strong> on a 16-thread box (<code>eval_full_report.md</code>, 2026-09-28). The proposal's multi-million EPS figure is a <strong>target</strong>, not a measurement. Scaling beyond 50 Million EPS across distributed Points of Presence (PoPs) is planned for Phase 2 via Maglev/HAProxy consistent-hashing load balancers.
   </li>
   <li>
     <strong>Civilian GDPR / DPDP "Right to be Forgotten" (Crypto-Shredding):</strong><br>

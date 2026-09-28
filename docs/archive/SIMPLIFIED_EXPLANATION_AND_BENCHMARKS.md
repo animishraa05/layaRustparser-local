@@ -1,3 +1,9 @@
+# SUPERSEDED — numbers in this file were never reproduced. Do not cite.
+
+> This is an archived pre-build document. Its headline figures (2,717,398 EPS, 8,154,686 events in 3.00s, 169,837 EPS per thread, < 1.8 µs latency) were never reproduced by any committed measurement. The fresh numbers: **1,003,273 EPS tiered (1.01× vs baseline) at p50 6.15 µs on the 224,657-line corpus** — source `eval_full_report.md` (2026-09-28); core and adversarial rows in `eval_hardcore_report.md` and `eval_adversarial_report.md` (2026-09-28). Reproduce: `./target/release/ulpf evaluate --engine all --duration 3 --threads 16 --samples 10000 --out report.md` (release build, idle machine; method: `scripts/bench.sh`). This file is kept for the research trail and will not be updated.
+>
+> ---
+>
 # Understanding ULPF: Architecture Differences & Benchmark Deep-Dive
 ## A Student-Friendly, Plain-Language Guide to the Universal Log Pre-processing Framework
 **Theme:** Blockchain & Cybersecurity (SIH26156)  

@@ -24,7 +24,7 @@ This document presents an exhaustive, subsystem-by-subsystem comparative breakdo
 | # | Subsystem Layer | Traditional Systems (Logstash / Fluentd / Splunk) | Theoretical Proposal (`Ulpf -1.pdf`) | Production ULPF Implementation (Our Codebase) | Primary Operational Advantage |
 | :- | :--- | :--- | :--- | :--- | :--- |
 | **1** | **Network Ingestion** | Blocking single-thread sockets; heavy OS context switches (~5k–25k EPS) | eBPF / XDP writing packets directly into Redpanda memory broker | Multi-threaded async Tokio sockets with `SO_REUSEPORT` ([`socket.rs`](../crates/ulpf-core/src/ingest/socket.rs)) | Unprivileged container portability, full TCP/UDP support, zero broker latency |
-| **2** | **Vendor Classification** | Linear regex waterfalls evaluated sequentially (O(N x m)) | Theoretical single-pass O(1) Radix tree | O(m) Aho-Corasick Multi-Pattern Automaton ([`classifier.rs`](../crates/ulpf-core/src/parser/classifier.rs)) | Instant classification in **49 nanoseconds** regardless of vendor count |
+| **2** | **Vendor Classification** | Linear regex waterfalls evaluated sequentially (O(N x m)) | Theoretical single-pass O(1) Radix tree | O(m) Aho-Corasick Multi-Pattern Automaton ([`classifier.rs`](../crates/ulpf-core/src/parser/classifier.rs)) | Sub-microsecond classification regardless of vendor count (gated test, see Subsystem 2) |
 | **3** | **Field Extraction** | Regex capture groups with heavy heap allocations (`String::clone`) | Single-pass combined parse-and-extract automaton | Two-tier architecture: classification + zero-copy byte slice extractors ([`extractors/`](../crates/ulpf-core/src/parser/extractors/)) | Zero heap string copies; memory references point directly to packet buffers |
 | **4** | **Schema Normalization** | Proprietary UEM or ad-hoc JSON dictionaries requiring custom SIEM shims | OCSF 1.9 (draft standard) | **OCSF 1.3 `NetworkActivity` (Class UID 4001)** ([`ocsf.rs`](../crates/ulpf-core/src/schema/ocsf.rs)) | Global enterprise standardization; native SIEM and Data Lake interoperability |
 | **5** | **Raw Log Preservation** | Discarded after parsing or stored without cryptographic linkage | Hash stored in Raw Vault (vulnerable to deletion) | 100% lossless `metadata.raw_data` + raw SHA-256 + time-ordered **UUIDv7** ([`parser/mod.rs`](../crates/ulpf-core/src/parser/mod.rs)) | Complete bidirectional traceability from normalized record to original raw bytes |
@@ -63,7 +63,7 @@ We engineered an asynchronous, multi-threaded network socket engine using **Toki
   ```
 - **Independent Ingress Threads:** Multiple Tokio worker tasks bind independently to port `5140`. The Linux kernel network scheduler distributes incoming datagrams across all CPU cores without lock contention.
 - **Direct Lock-Free Channels:** Ingested packets are pushed directly into bounded in-memory MPSC channels (`tokio::sync::mpsc::channel(50_000)`), completely eliminating intermediate message brokers.
-- **Empirical Result:** Achieved **2,717,398 EPS** aggregate throughput on consumer hardware with zero packet drops and zero external dependencies.
+- **Measured Result:** **1,003,273 EPS** tiered (baseline 995,247 EPS in the same run, **1.01×**) on the 224,657-line corpus, with zero packet drops and zero external dependencies. Source: `eval_full_report.md` (2026-09-28). Reproduce: `ulpf evaluate --engine all --duration 3 --threads 16 --samples 10000 --out report.md` (release build, idle machine). The pre-build proposal targeted multi-million EPS; ~1.0M EPS is the highest measured value to date, not the target.
 
 ---
 
@@ -93,7 +93,7 @@ We architected a clean **Two-Tier Processing Separation**:
    ];
    let ac = AhoCorasick::new(&patterns).expect("valid patterns");
    ```
-   - **Performance:** Scans the raw log buffer in **49 nanoseconds** (O(m) scan), immediately classifying the stream into `VendorKind::CiscoAsa`, `Fortinet`, `PaloAlto`, `Suricata`, `PfSense`, or `Unknown`.
+   - **Performance:** Scans the raw log buffer in **sub-microsecond time** (O(m) scan), immediately classifying the stream into `VendorKind::CiscoAsa`, `Fortinet`, `PaloAlto`, `Suricata`, `PfSense`, or `Unknown`. Gated by `test_classification_sub_microsecond_benchmark` (< 2 µs per classification). Reproduce: `cargo test -p ulpf-core --test parser_tests test_classification_sub_microsecond_benchmark`.
 2. **Tier 2: Specialized Zero-Copy Extractors:** Routes directly to the designated extractor without evaluating any unrelated parsing rules.
 
 ---
@@ -113,7 +113,7 @@ We engineered five dedicated zero-copy byte slice extractors ([`crates/ulpf-core
 - **Palo Alto (`paloalto.rs`):** Zero-copy CSV field indexer. Traverses commas directly to extract Source IP (col 7), Destination IP (col 8), NAT IPs, Ports, Rule Name, and Byte counters without a single regex execution.
 - **Suricata (`suricata.rs`):** In-place JSON parser mapping EVE-JSON fields directly to numeric types and byte slices.
 - **pfSense (`pfsense.rs`):** CSV indexer for `filterlog` BSD frames.
-- **Memory Footprint:** Zero heap copies during extraction. Field slices borrow directly from the input buffer (`&'a str`), achieving sub-microsecond extraction latency (< 1.8 µs end-to-end).
+- **Memory Footprint:** Zero heap copies during extraction. Field slices borrow directly from the input buffer (`&'a str`). End-to-end pipeline latency is measured, not estimated: tiered p50 **6.15 µs** vs baseline 106.67 µs (−94.2%) on the 224,657-line corpus. Source: `eval_full_report.md` (2026-09-28).
 
 ---
 
@@ -180,7 +180,7 @@ We engineered an enterprise implementation of the **RFC 6962 Certificate Transpa
    - **Leaf Nodes:** `SHA256(0x00 || raw_bytes)`
    - **Internal Nodes:** `SHA256(0x01 || left || right)`
 2. **Arbitrary Leaf Count Balancing:** Gracefully handles odd leaf counts (N) via RFC 6962 tree balancing rather than naive zero-padding.
-3. **O(log N) Inclusion Proofs:** To verify that Log #7,432 out of a 10,000-log block was untouched, ULPF generates an audit path of just `ceil(log2(10000)) = 14` hashes. Verification takes under **1.2 microseconds**.
+3. **O(log N) Inclusion Proofs:** To verify that Log #7,432 out of a 10,000-log block was untouched, ULPF generates an audit path of just `ceil(log2(10000)) = 14` hashes. Verification completes in microseconds on a laptop CPU. Reproduce: `./target/release/ulpf verify --file data/parquet/block_00001.parquet --ledger data/ledger.jsonl` (exit 0 = valid).
 4. **Dual-Trigger Batch Accumulator** ([`crates/ulpf-integrity/src/batcher.rs`](../crates/ulpf-integrity/src/batcher.rs)):
    Flushes a block when:
    `Event Count >= 1,000 OR Duration >= 2,000 ms`
@@ -249,7 +249,7 @@ The PDF proposed:
 #### What We Implemented in Production Rust
 We engineered a native Rust implementation of the **Drain3 Log Template Miner** (based on the LogPai algorithm) ([`crates/ulpf-ai/src/drain.rs`](../crates/ulpf-ai/src/drain.rs)):
 - **Fixed-Depth Prefix Tree (Depth = 4):** Tokenizes incoming logs by whitespace, masks dynamic parameters (IPs, ports, session IDs, timestamps) into `<*>`, and searches the prefix tree.
-- **Microsecond Latency:** Clusters logs into template buckets in **< 10 microseconds on a single CPU core** with **zero GPU requirements**.
+- **Microsecond Latency:** Clusters logs into template buckets in **tens of microseconds on a single CPU core** with **zero GPU requirements** (release gate: < 25 µs avg in `ai_tests.rs`). Reproduce: `cargo test --release -p ulpf-ai --test ai_tests drain`.
 - **Structural Evasion Anomaly Alerts:** Tracks cluster occurrence frequencies. If an attacker sends malformed evasion packets, Drain3 clusters them into a rare template and alerts in real time:
   `[SECURITY ALERT] Surge in rare log cluster #42 (Possible evasion / parser drift)`
 
