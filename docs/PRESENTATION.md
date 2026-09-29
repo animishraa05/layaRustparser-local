@@ -48,14 +48,14 @@
 *(SRS §3.e, §3.i — onboarding · §3.h — Drain analytics · §3.j — air-gap)*
 
 #### Microsecond Structural Anomaly Detection
-* **Drain3 Template Miner (LogPai):** Runs directly on CPU in native Rust with $< 5\,\mu\text{s}$ latency per event.
+* **Drain3 Template Miner (LogPai):** Runs directly on CPU in native Rust, clustering templates in tens of microseconds with zero GPU requirements.
 * Uses a fixed-depth parse tree to extract structural patterns, masking dynamic parameters (IPs, ports, timestamps) into `<*>`.
 * **Zero-GPU Anomaly Detection:** Instantly flags unknown structural anomalies or evasion bursts without requiring heavy neural networks.
 
 #### 1-Click Plug-and-Play Onboarding
 * **Air-Gapped Operation:** No internet connection or cloud API required.
 * **New vendor live in 3 commands** — sample file → `ulpf onboard` → hot-load via `POST /onboard`. Full operator procedure: `docs/ONBOARDING_RUNBOOK.md`.
-* **Heuristic / Local SLM Synthesizer:** Analyzes 3–5 sample lines of an unknown vendor log, discovers field boundaries, synthesizes strict non-greedy regexes with named groups, and maps them to OCSF fields.
+* **Deterministic Heuristic Synthesizer:** Analyzes 3–5 sample lines of an unknown vendor log, discovers field boundaries, synthesizes strict non-greedy regexes with named groups, and maps them to OCSF fields.
 * **Automated Validation Harness:** Pre-flight tests the synthesized parser against 20 sample variations; once 100% validated, hot-loads into the running engine with zero downtime.
 
 ---
@@ -65,11 +65,11 @@
 
 | Metric / Parameter | Industry Baseline (Logstash/Fluentd) | ULPF Rust Engine | Advantage |
 | :--- | :--- | :--- | :--- |
-| **Throughput (16 vCPUs)** | 12,000 – 25,000 EPS | **> 600,000 EPS** | **25x – 50x Faster** |
-| **End-to-End Latency (P99)** | 85 – 150 ms | **< 1.8 ms** | **98% Latency Reduction** |
-| **Memory Footprint** | 1.8 GB – 3.5 GB (JVM Heap) | **< 180 MB RSS** | **90% Less Memory** |
+| **Throughput (16 vCPUs)** | 12,000 – 25,000 EPS | **1,003,273 EPS** | **40x – 80x faster** |
+| **End-to-End Latency (P99)** | 85 – 150 ms | **9.86 µs** | **>99.9% lower** |
+| **Memory Footprint** | 1.8 GB – 3.5 GB (JVM Heap) | Not measured in committed reports | — |
 | **Forensic Integrity** | Basic per-log hash (No deletion proof) | **RFC 6962 Merkle Tree ($O(\log N)$)** | **Provable Non-Repudiation** |
-| **Compression Ratio** | 45% (Gzip raw) | **> 82% (Parquet + Snappy)** | **3.8x Storage Savings** |
+| **Compression Ratio** | 45% (Gzip raw) | **4,312× template compression (32 templates from 224,657 lines)** | **Measured (eval_full_report.md)** |
 | **Deployment Mode** | Cloud-dependent dependencies | **100% Air-Gapped Docker** (image slim-down in progress — SRS §3.k: partial) | **Zero External Network Calls** |
 
 #### Judge Q&A — "What happens at a 500k EPS burst?"
