@@ -1,0 +1,23 @@
+{
+  "block_id": 0,
+  "leaf_count": 1000,
+  "expected_records": 1000,
+  "ledger_merkle_root": "e12dfacf15b6cc84fcedf91aeb3119f7d8c7a638e2c7e9541b9bb02d12833b72",
+  "computed_merkle_root": "a94c909a2404f7f022bcc4a428f1d815711c2472a020e8f462330c914493efe8",
+  "verdict": "fail",
+  "failures": [
+    {
+      "leaf_index": 0,
+      "event_id": "01a0c363-9359-7160-8c24-143f05e15890",
+      "stored_raw_hash": "a0e03604ffc19ec030eb04e83d069579011217f797fe0eca705f17134be919f0",
+      "calculated_raw_hash": "10f90610737d6556c2b5ab224db8d768ec3e36a90641af2f027d8c4b62c05400",
+      "raw_log_preview": "<166>Sep 21 14:02:51 asa-core-fw %ASA-6-302014: Teardown TCP con...",
+      "reason": {
+        "DigestMismatch": {
+          "stored_hash": "a0e03604ffc19ec030eb04e83d069579011217f797fe0eca705f17134be919f0",
+          "calculated_hash": "10f90610737d6556c2b5ab224db8d768ec3e36a90641af2f027d8c4b62c05400"
+        }
+      }
+    }
+  ]
+}

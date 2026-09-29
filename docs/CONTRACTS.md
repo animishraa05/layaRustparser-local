@@ -29,6 +29,7 @@ Run from the repository root:
 | **#13 Analyst Dashboard** | `GET /metrics`<br>`GET /alerts` | [`data/fixtures/api/metrics.json`](../data/fixtures/api/metrics.json)<br>[`data/fixtures/api/alerts.json`](../data/fixtures/api/alerts.json) |
 | **#14 Investigation & Courtroom Export** | `GET /blocks`<br>`GET /blocks/:id/records`<br>`GET /prove/:block/:leaf`<br>`GET /export/bundle/:id` | [`data/fixtures/api/blocks.json`](../data/fixtures/api/blocks.json)<br>[`data/fixtures/api/records_block_1.json`](../data/fixtures/api/records_block_1.json)<br>[`data/fixtures/api/prove_501.json`](../data/fixtures/api/prove_501.json)<br>[`data/fixtures/api/prove_live.json`](../data/fixtures/api/prove_live.json) |
 | **#15 Parser & Integrity Management** | `GET /parsers`<br>`POST /parsers/test`<br>`POST /onboard`<br>`POST /tamper/drill`<br>`GET /system` | [`data/fixtures/api/parsers.json`](../data/fixtures/api/parsers.json)<br>[`data/fixtures/api/parsers_test.json`](../data/fixtures/api/parsers_test.json)<br>[`data/fixtures/api/onboard_preview.json`](../data/fixtures/api/onboard_preview.json)<br>[`data/fixtures/api/system.json`](../data/fixtures/api/system.json) |
+| **#14 Investigation & Courtroom Export (CLI export)** | `ulpf inspect --json-out`<br>`ulpf verify --json-out` | [`data/fixtures/api/inspect_records_block_1.json`](../data/fixtures/api/inspect_records_block_1.json)<br>[`data/fixtures/api/verify_report_valid.json`](../data/fixtures/api/verify_report_valid.json)<br>[`data/fixtures/api/verify_report_tampered.json`](../data/fixtures/api/verify_report_tampered.json) |
 
 ---
 
@@ -453,7 +454,87 @@ Displays batcher thresholds, queue capacity, and comparative benchmark metrics.
 
 ---
 
-## 4. Error Response Schema
+## 4. CLI Machine-Readable Reports (`--json-out`, Issue #57)
+
+Automation (CI gates, the #44 SIEM forwarder, the #14/#15 frontend pages)
+consumes these files instead of scraping human stdout. Human stdout is
+byte-identical whether or not `--json-out` is passed, and the exit-code
+contract is preserved in both modes: **0 valid · 1 usage/IO error · 2
+tamper verdict**. `--json-out` is written whenever a report is produced
+(exit 0/2); usage errors (exit 1) and `verify --consistency` write nothing
+(the chain report has no single block id / root pair — combining it with
+`--json-out` exits 1).
+
+### 4.1 `ulpf verify --file <block> --ledger <ledger> --json-out <path>`
+
+```json
+{
+  "block_id": 1,
+  "leaf_count": 1000,
+  "expected_records": 1000,
+  "ledger_merkle_root": "398e59a6304ea9fa83b3d9eb5f0739bf081a01ce4d34e30e5c320040fd9e69a8",
+  "computed_merkle_root": "398e59a6304ea9fa83b3d9eb5f0739bf081a01ce4d34e30e5c320040fd9e69a8",
+  "verdict": "pass",
+  "failures": []
+}
+```
+
+- `verdict`: `"pass"` (exit 0) or `"fail"` (exit 2) — mirrors the exit code.
+- `failures`: one object per corrupted record (`leaf_index`, `event_id`,
+  `stored_raw_hash`, `calculated_raw_hash`, `raw_log_preview`, `reason` with
+  a `DigestMismatch` / `IndexMismatch` / `CountDiscrepancy` /
+  `MerkleRootMismatch` payload).
+- Fixtures: [`verify_report_valid.json`](../data/fixtures/api/verify_report_valid.json)
+  (`verdict: pass`, exit 0) and
+  [`verify_report_tampered.json`](../data/fixtures/api/verify_report_tampered.json)
+  (`verdict: fail` with the single leaf-0 `DigestMismatch`, exit 2) —
+  byte-for-byte output of `verify --json-out` on the tracked
+  `block_00001` (valid) / `block_00000` (tampered) fixtures.
+
+### 4.2 `ulpf inspect --file <block> --count N --json-out <path>`
+
+Byte-identical serialization to `GET /blocks/:id/records` (§3.4) — CLI
+exports and HTTP responses share the `BlockRecordsResponse` struct, so they
+cannot drift apart. Each record carries `event_id` (UUIDv7), `raw_log`,
+`raw_hash`, and the parsed `ocsf` object — the exact shape the #14
+investigation page renders.
+
+```json
+{
+  "block_id": 1,
+  "total_records_in_block": 1000,
+  "filtered_records_count": 1000,
+  "offset": 0,
+  "limit": 2,
+  "records": [
+    {
+      "event_id": "0195d2c2-84b2-7c3a-9e12-4211832049b0",
+      "block_id": 1,
+      "leaf_index": 0,
+      "timestamp": 1789984478081,
+      "vendor": "cisco_asa",
+      "raw_log": "<166>Sep 21 14:00:01 asa-core-fw %ASA-6-302013: Built outbound TCP connection 1000672 for outside:203.0.113.54/25 to inside:10.1.6.180/52369",
+      "raw_hash": "23dfa4b126307137f68c7849cb16b9b329ad4148e6587c6778dc651f158db49f",
+      "ocsf": {
+        "activity_id": 1,
+        "activity_name": "Open",
+        "disposition": "Allowed",
+        "src_endpoint": { "ip": "203.0.113.54", "port": 25 },
+        "dst_endpoint": { "ip": "10.1.6.180", "port": 52369 }
+      }
+    }
+  ]
+}
+```
+
+- Fixture: [`inspect_records_block_1.json`](../data/fixtures/api/inspect_records_block_1.json)
+  — byte-for-byte output of `inspect --count 2 --json-out` on the tracked
+  `block_00001` fixture (field-for-field the §3.4 shape; compare with
+  [`records_block_1.json`](../data/fixtures/api/records_block_1.json)).
+
+---
+
+## 5. Error Response Schema
 All non-2xx responses return a consistent error body:
 ```json
 {

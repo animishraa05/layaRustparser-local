@@ -96,7 +96,7 @@ python3 scripts/gen_adversarial.py --full 25000
 ./target/release/ulpf verify --file data/parquet/block_00000.parquet --ledger data/ledger.jsonl
 ```
 
-> `evaluate`/`benchmark` need **release** builds on an idle machine: accuracy rows are deterministic, timing rows swing with load — hence the report timestamps. Exit codes: **0 valid · 1 IO error · 2 tamper**; console transcript in [`docs/SCORECARDS.md`](docs/SCORECARDS.md#cryptographic-chain-of-custody).
+> `evaluate` needs **release** builds on an idle machine: accuracy rows are deterministic, timing rows swing with load — hence the report timestamps. (`benchmark` is a deprecated shim pointing at `evaluate`.) Exit codes: **0 valid · 1 IO error · 2 tamper**; console transcript in [`docs/SCORECARDS.md`](docs/SCORECARDS.md#cryptographic-chain-of-custody).
 
 ## Testing & verification gate
 
@@ -185,12 +185,12 @@ bash scripts/run_demo.sh
 | Subcommand | Purpose | Key flags (defaults) |
 | :--- | :--- | :--- |
 | `ingest` | Live Syslog UDP/TCP → OCSF → Merkle → Parquet | `--udp 0.0.0.0:5140` · `--tcp 0.0.0.0:5140` · `--parquet-dir data/parquet` · `--ledger data/ledger.jsonl` · `--batch-size 1000` · `--batch-timeout 2000` · `--reuse-port` |
-| `verify` | Audit a Parquet block against the ledger | `--file <block.parquet>` · `--ledger data/ledger.jsonl` · **exit 0/1/2** |
+| `verify` | Audit a Parquet block against the ledger | `--file <block.parquet>` · `--ledger data/ledger.jsonl` · `--json-out <report.json>` · **exit 0/1/2** |
 | `onboard` | Synthesize + validate a parser from sample lines | `-s/--sample <file>` · `-v/--vendor <name>` · `-m/--model <name>` · `-o/--out data/parsers` |
-| `benchmark` | Multi-core parse/normalize throughput | `--data-dir data/raw` *(long-only)* · `-d/--duration 5` · `-t/--threads 16` · `--compare` |
+| `benchmark` | Deprecated shim (removed; it duplicated `evaluate`) — prints a pointer to `evaluate`, exits 1 | Old flags still parse; use `evaluate` |
 | `evaluate` | Baseline vs 3-Tier scorecard + percentiles + cache stats | `-e/--engine {all,baseline,tiered}` · `--corpus {core,adversarial,holdout}` · `--data-dir data/raw` · `-d/--duration 3` · `-t/--threads 16` · `-s/--samples 10000` · `-o/--out report.md` · `--json-out` · `--audit-dump` |
 | `scorecard` | One-command side-by-side scorecard box: throughput, latency deltas, accuracy audit, vanilla-vs-3-tier duel, PASS/FAIL gates, verdict + markdown reports | `--corpus {core,adversarial,holdout}` · `--data-dir data/raw` · `-d/--duration 3` · `-t/--threads 16` · `-s/--samples 10000` · `-o/--out scorecard_report.md` |
-| `inspect` | Print forensic records from a block | `-f/--file <block.parquet>` · `-c/--count 1` |
+| `inspect` | Print forensic records from a block | `-f/--file <block.parquet>` · `-c/--count 1` · `--json-out <records.json>` |
 | `tamper` | Adversarial edit of a stored record (attack simulator) | `-f/--file <block.parquet>` · `-l/--leaf 0` · `-i/--ip 10.99.99.99` |
 
 `ulpf-generator`: `-t/--target <IP:PORT>` · `-p/--proto {udp,tcp}` · `-r/--rate <EPS>` (0 = max) · `-d/--duration <sec>` (0 = infinite) · `-D/--dataset {all,cisco,fortigate,paloalto,suricata,pfsense,kaggle}` · `-w/--workers <N>` · `--data-dir <PATH>` (auto-located from cwd). Flags via `ulpf-generator --help`.

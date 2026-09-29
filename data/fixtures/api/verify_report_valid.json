@@ -1,0 +1,9 @@
+{
+  "block_id": 1,
+  "leaf_count": 1000,
+  "expected_records": 1000,
+  "ledger_merkle_root": "398e59a6304ea9fa83b3d9eb5f0739bf081a01ce4d34e30e5c320040fd9e69a8",
+  "computed_merkle_root": "398e59a6304ea9fa83b3d9eb5f0739bf081a01ce4d34e30e5c320040fd9e69a8",
+  "verdict": "pass",
+  "failures": []
+}

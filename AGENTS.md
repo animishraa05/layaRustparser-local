@@ -21,7 +21,7 @@ Workspace of 5 crates (root `Cargo.toml`, edition 2021, pinned toolchain via `ru
 | `crates/ulpf-integrity` | RFC 6962 Merkle tree, dual-trigger batcher (1,000 events / 2,000 ms), Parquet writer, tamper verifier |
 | `crates/ulpf-ai` | `DrainMiner`, `LayaDecisionEngine`, `Onboarder`, `TieredPipeline` (3-tier), `EvaluatorEngine` |
 | `crates/ulpf-generator` | Traffic blaster binary `ulpf-generator` |
-| `crates/ulpf-cli` | Binary `ulpf`; subcommands: `ingest`, `verify`, `onboard`, `benchmark`, `evaluate`, `scorecard`, `inspect`, `tamper`, `serve` |
+| `crates/ulpf-cli` | Binary `ulpf`; subcommands: `ingest`, `verify` (`--json-out`), `onboard`, `evaluate`, `scorecard`, `inspect` (`--json-out`), `prove`, `tamper`, `serve` (+ deprecated `benchmark` shim → `evaluate`) |
 
 Real entrypoints: `crates/ulpf-cli/src/main.rs`, `crates/ulpf-generator/src/main.rs`. Key wiring: `ulpf-ai/src/pipeline.rs` (Tier1 LRU → Tier2 Drain → Tier3 Laya), `ulpf-core/src/parser/mod.rs` (baseline `UniversalParser`), `ulpf-integrity/src/storage.rs` (Arrow schema: `event_id, block_id, leaf_index, timestamp, vendor, raw_log, raw_hash, ocsf_json`), `ulpf-cli/src/serve/mod.rs` (UI + SIEM HTTP/1.1 REST API).
 
@@ -48,7 +48,7 @@ Performance gates when touching hot path or miner: p50 < 5.0 µs, LRU hit rate >
 
 ## Gotchas (would bite you without this)
 
-- **`cargo run -p ulpf-cli -- evaluate|benchmark` in debug builds:** the old duplicate `-d` short flag (`data_dir` vs `duration`) that tripped clap debug-asserts was removed in P10.0 — debug now works. Release is still the intended eval mode (numbers are what count).
+- **`cargo run -p ulpf-cli -- evaluate` in debug builds:** the old duplicate `-d` short flag (`data_dir` vs `duration`) that tripped clap debug-asserts was removed in P10.0 — debug now works. Release is still the intended eval mode (numbers are what count). (`benchmark` is a deprecated shim pointing at `evaluate`.)
 - **CLI defaults assume cwd = repo root** (`data/raw`, `data/parquet`, `data/ledger.jsonl`). Run binaries from the root or pass explicit paths.
 - **`ulpf --help` is authoritative for flags; README quick-start flags verified correct** (a pre-slim drift note about `ingest --proto`/`onboard --name` retired with the slim — the examples it cited no longer exist).
 - **`scripts/run_demo.sh` is now non-destructive (P10.0):** it writes to scratch `data/demo/` (gitignored), never the tracked `data/parquet/` fixtures. `scripts/simulate_tamper.py` still mutates the Parquet block it is pointed at — the no-arg default is the intentionally-tampered `data/parquet/block_00000.parquet`; pass an explicit path for anything else.

@@ -1,0 +1,106 @@
+{
+  "block_id": 1,
+  "total_records_in_block": 1000,
+  "filtered_records_count": 1000,
+  "offset": 0,
+  "limit": 2,
+  "records": [
+    {
+      "event_id": "01a0c363-9374-7525-b61d-f79383f79259",
+      "block_id": 1,
+      "leaf_index": 0,
+      "timestamp": 1789984478068,
+      "vendor": "Cisco",
+      "raw_log": "<162>Sep 21 14:08:22 asa-dc-01 %ASA-2-106001: Inbound TCP connection denied from 203.0.113.143/47995 to 10.1.4.238/8080 flags RST on interface outside",
+      "raw_hash": "4d93aa264543ee42f247f016b6d64438fd11c228f3f29dc7487d76b9dbbe74ea",
+      "ocsf": {
+        "activity_id": 99,
+        "activity_name": "Other",
+        "category_uid": 4,
+        "class_uid": 4001,
+        "connection_info": {
+          "direction": "Inbound",
+          "protocol_name": "TCP",
+          "protocol_num": 6
+        },
+        "disposition": "Dropped",
+        "dst_endpoint": {
+          "ip": "10.1.4.238",
+          "port": 8080
+        },
+        "metadata": {
+          "event_id": "01a0c363-9374-7525-b61d-f79383f79259",
+          "ingest_time": 1789984478068,
+          "product": {
+            "name": "ASA",
+            "vendor_name": "Cisco"
+          },
+          "raw_data": "<162>Sep 21 14:08:22 asa-dc-01 %ASA-2-106001: Inbound TCP connection denied from 203.0.113.143/47995 to 10.1.4.238/8080 flags RST on interface outside",
+          "raw_hash": "4d93aa264543ee42f247f016b6d64438fd11c228f3f29dc7487d76b9dbbe74ea"
+        },
+        "src_endpoint": {
+          "interface": "outside",
+          "ip": "203.0.113.143",
+          "port": 47995
+        },
+        "time": 1789984478068,
+        "type_uid": 400199,
+        "unmapped": {
+          "cisco_message_code": "106001",
+          "cisco_severity": "2"
+        }
+      }
+    },
+    {
+      "event_id": "01a0c363-9374-7525-b61d-f794d2ce6557",
+      "block_id": 1,
+      "leaf_index": 1,
+      "timestamp": 1789984478068,
+      "vendor": "Cisco",
+      "raw_log": "<166>Sep 21 14:03:24 asa-edge-01 %ASA-6-302016: Teardown UDP connection 1002172 for outside:203.0.113.164/53 to inside:10.1.19.110/29865 duration 0:00:11 bytes 6586",
+      "raw_hash": "fe82444d40072039e980b4a79208515e3af76cbe516c0d02447f6a89d71f0efb",
+      "ocsf": {
+        "activity_id": 2,
+        "activity_name": "Close",
+        "category_uid": 4,
+        "class_uid": 4001,
+        "connection_info": {
+          "protocol_name": "UDP",
+          "protocol_num": 17
+        },
+        "disposition": "Allowed",
+        "dst_endpoint": {
+          "interface": "inside",
+          "ip": "10.1.19.110",
+          "port": 29865
+        },
+        "metadata": {
+          "event_id": "01a0c363-9374-7525-b61d-f794d2ce6557",
+          "ingest_time": 1789984478068,
+          "product": {
+            "name": "ASA",
+            "vendor_name": "Cisco"
+          },
+          "raw_data": "<166>Sep 21 14:03:24 asa-edge-01 %ASA-6-302016: Teardown UDP connection 1002172 for outside:203.0.113.164/53 to inside:10.1.19.110/29865 duration 0:00:11 bytes 6586",
+          "raw_hash": "fe82444d40072039e980b4a79208515e3af76cbe516c0d02447f6a89d71f0efb"
+        },
+        "src_endpoint": {
+          "interface": "outside",
+          "ip": "203.0.113.164",
+          "port": 53
+        },
+        "time": 1789984478068,
+        "traffic": {
+          "bytes_out": 6586
+        },
+        "type_uid": 400102,
+        "unmapped": {
+          "cisco_message_code": "302016",
+          "cisco_severity": "6",
+          "connection_id": "1002172",
+          "duration": "0:00:11"
+        }
+      }
+    }
+  ]
+}

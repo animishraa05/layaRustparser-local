@@ -52,7 +52,7 @@ Action Inviolability 100%, Grouping Accuracy > 90%. Check with:
 
 - `scripts/run_demo.sh` is non-destructive: scratch output goes to `data/demo/` (gitignored), never the tracked fixtures. `scripts/simulate_tamper.py` still mutates whatever block it's pointed at — pass an explicit path.
 - `data/parquet/block_00000.parquet` is **intentionally tampered** (`verify` must FAIL). Don't "fix" it.
-- Debug builds work for all subcommands (old `-d` flag clash fixed); release is still required for meaningful benchmark numbers.
+- Debug builds work for all subcommands (old `-d` flag clash fixed); release is still required for meaningful `evaluate` numbers (`benchmark` is now a deprecated shim pointing at `evaluate`).
 - `scripts/populate_datasets.py` writes repo-relative (`ULPF_OUT_DIR` overrides). No foreign hardcoded paths anymore.
 - Flaky under load: `test_classification_sub_microsecond_benchmark` can fail on busy machines. Re-run before assuming breakage.
 - If README and `ulpf --help` disagree on flags, `--help` wins.

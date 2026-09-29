@@ -142,13 +142,14 @@ echo -e "${WHITE}Feeding sample logs from an unrecognized firewall appliance (${
 sleep 1
 
 # ------------------------------------------------------------------------------
-# STEP 6: Multi-Core In-Memory Throughput Benchmark
+# STEP 6: Baseline vs 3-Tier Scorecard (replaces the retired `benchmark`
+# subcommand, now a deprecated shim pointing at `evaluate`)
 # ------------------------------------------------------------------------------
 echo -e "\n${BOLD}${BLUE}------------------------------------------------------------------------------${RESET}"
-echo -e "${BOLD}${BLUE} STEP 6: Multi-Core Throughput Benchmark (16 CPU Threads)                     ${RESET}"
+echo -e "${BOLD}${BLUE} STEP 6: Baseline vs 3-Tier Scorecard (16 CPU Threads)                           ${RESET}"
 echo -e "${BOLD}${BLUE}------------------------------------------------------------------------------${RESET}"
 
-"$ULPF_BIN" benchmark --duration 3 --threads 16
+"$ULPF_BIN" scorecard --duration 1 --threads 16 --samples 1000 --corpus core --data-dir "$ROOT_DIR/data/raw" --out "$DEMO_DIR/scorecard_report.md"
 
 # Cleanup
 kill -9 $ENGINE_PID 2>/dev/null || true
