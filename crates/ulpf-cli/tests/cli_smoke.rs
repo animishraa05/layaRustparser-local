@@ -12,6 +12,9 @@
 //! 4. `ingest` must flush the tail batch on SIGTERM (was: killed process
 //!    forfeited every event below the batch threshold — measured 187-event
 //!    loss in P9-scale).
+//! 5. #57: `verify`/`inspect --json-out` must write the CONTRACTS.md shapes
+//!    with stdout byte-identical and exits 0/1/2 preserved; `benchmark` is
+//!    a deprecation shim pointing at `evaluate` (exit 1, no scorecard path).
 
 use std::net::UdpSocket;
 use std::path::PathBuf;
@@ -743,4 +746,299 @@ fn verify_consistency_on_scratch_dataset_passes() {
     );
 
     std::fs::remove_dir_all(&tmp).ok();
+}
+
+/// #57: `benchmark` is a deprecation shim, not a scorecard path. It still
+/// parses old flags (so existing scripts reach the pointer, not a bare clap
+/// error), prints the `use `ulpf evaluate`` pointer to stderr, leaves stdout
+/// empty, and exits 1 (usage error — 2 stays reserved for tamper verdicts).
+#[test]
+fn benchmark_shim_points_at_evaluate_and_exits_one() {
+    for extra in [
+        Vec::new(),
+        vec!["--duration", "3", "--threads", "16"],
+        vec!["--compare"],
+    ] {
+        let mut args = vec!["benchmark".to_string()];
+        args.extend(extra.iter().map(|s| s.to_string()));
+        let out = Command::new(bin())
+            .args(&args)
+            .output()
+            .expect("spawn ulpf benchmark (shim)");
+        assert_eq!(
+            out.status.code(),
+            Some(1),
+            "benchmark shim must exit 1 for args {args:?}, got {:?}",
+            out.status.code()
+        );
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            stderr.contains("use `ulpf evaluate`"),
+            "shim must point at evaluate, stderr: {stderr}"
+        );
+        assert!(
+            out.stdout.is_empty(),
+            "shim must leave stdout empty, got: {}",
+            String::from_utf8_lossy(&out.stdout)
+        );
+    }
+}
+
+/// Unique scratch path for `--json-out` outputs (mirrors the existing
+/// tmp-dir style in this file).
+fn scratch_json(name: &str) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!(
+        "ulpf_jsonout_{}_{}_{}",
+        std::process::id(),
+        name,
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    dir.join("out.json")
+}
+
+/// #57: `verify --json-out` on the known-good block exits 0, writes the
+/// CONTRACTS.md §4.1 shape (verdict pass, matching roots, no failures),
+/// and leaves human stdout byte-identical to the no-flag run.
+#[test]
+fn verify_json_out_valid_block_passes_with_identical_stdout() {
+    let json_path = scratch_json("verify_valid");
+    let with_flag = Command::new(bin())
+        .args([
+            "verify",
+            "--file",
+            fixture("data/parquet/block_00001.parquet")
+                .to_str()
+                .unwrap(),
+            "--ledger",
+            fixture("data/ledger.jsonl").to_str().unwrap(),
+            "--json-out",
+            json_path.to_str().unwrap(),
+        ])
+        .output()
+        .expect("spawn ulpf verify --json-out (valid)");
+    assert_eq!(with_flag.status.code(), Some(0));
+    let report: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&json_path).unwrap())
+            .expect("json-out must be valid JSON");
+    assert_eq!(report.get("block_id").and_then(|v| v.as_u64()), Some(1));
+    assert_eq!(
+        report.get("leaf_count").and_then(|v| v.as_u64()),
+        Some(1000)
+    );
+    assert_eq!(report.get("verdict").and_then(|v| v.as_str()), Some("pass"));
+    assert_eq!(
+        report.get("ledger_merkle_root"),
+        report.get("computed_merkle_root"),
+        "valid block: anchored and recomputed roots must match"
+    );
+    assert_eq!(
+        report
+            .get("failures")
+            .and_then(|v| v.as_array())
+            .map(|a| a.len()),
+        Some(0)
+    );
+
+    let plain = Command::new(bin())
+        .args([
+            "verify",
+            "--file",
+            fixture("data/parquet/block_00001.parquet")
+                .to_str()
+                .unwrap(),
+            "--ledger",
+            fixture("data/ledger.jsonl").to_str().unwrap(),
+        ])
+        .output()
+        .expect("spawn ulpf verify (valid, no flag)");
+    assert_eq!(
+        with_flag.stdout, plain.stdout,
+        "human stdout must be byte-identical with and without --json-out"
+    );
+
+    std::fs::remove_dir_all(json_path.parent().unwrap()).ok();
+}
+
+/// #57: `verify --json-out` on the deliberately tampered block exits 2,
+/// writes `verdict: fail` with the per-record failure, and keeps stdout
+/// byte-identical to the no-flag run.
+#[test]
+fn verify_json_out_tampered_block_fails_with_identical_stdout() {
+    let json_path = scratch_json("verify_tampered");
+    let with_flag = Command::new(bin())
+        .args([
+            "verify",
+            "--file",
+            fixture("data/parquet/block_00000.parquet")
+                .to_str()
+                .unwrap(),
+            "--ledger",
+            fixture("data/ledger.jsonl").to_str().unwrap(),
+            "--json-out",
+            json_path.to_str().unwrap(),
+        ])
+        .output()
+        .expect("spawn ulpf verify --json-out (tampered)");
+    assert_eq!(with_flag.status.code(), Some(2));
+    let report: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&json_path).unwrap())
+            .expect("exit-2 json-out must still be valid JSON");
+    assert_eq!(report.get("verdict").and_then(|v| v.as_str()), Some("fail"));
+    let failures = report
+        .get("failures")
+        .and_then(|v| v.as_array())
+        .expect("fail verdict must carry per-record failures");
+    assert_eq!(
+        failures.len(),
+        1,
+        "block_00000 has exactly one tampered leaf"
+    );
+    assert_eq!(
+        failures[0].get("leaf_index").and_then(|v| v.as_u64()),
+        Some(0)
+    );
+    assert!(
+        failures[0].get("reason").is_some(),
+        "failure must name its reason: {failures:?}"
+    );
+
+    let plain = Command::new(bin())
+        .args([
+            "verify",
+            "--file",
+            fixture("data/parquet/block_00000.parquet")
+                .to_str()
+                .unwrap(),
+            "--ledger",
+            fixture("data/ledger.jsonl").to_str().unwrap(),
+        ])
+        .output()
+        .expect("spawn ulpf verify (tampered, no flag)");
+    assert_eq!(
+        with_flag.stdout, plain.stdout,
+        "tamper stdout must be byte-identical with and without --json-out"
+    );
+
+    std::fs::remove_dir_all(json_path.parent().unwrap()).ok();
+}
+
+/// #57: a usage error (missing input) stays exit 1 in JSON mode and writes
+/// no report — there is nothing to report.
+#[test]
+fn verify_json_out_missing_file_exits_one_without_report() {
+    let json_path = scratch_json("verify_missing");
+    let out = Command::new(bin())
+        .args([
+            "verify",
+            "--file",
+            "/nonexistent/block_99999.parquet",
+            "--ledger",
+            fixture("data/ledger.jsonl").to_str().unwrap(),
+            "--json-out",
+            json_path.to_str().unwrap(),
+        ])
+        .output()
+        .expect("spawn ulpf verify --json-out (missing)");
+    assert_eq!(out.status.code(), Some(1));
+    assert!(
+        !json_path.exists(),
+        "usage errors must not write a report file"
+    );
+    std::fs::remove_dir_all(json_path.parent().unwrap()).ok();
+}
+
+/// #57: `--consistency` has no single block id / root pair, so combining it
+/// with `--json-out` must fail loudly (exit 1), never silently drop the flag.
+#[test]
+fn verify_consistency_with_json_out_exits_one() {
+    let json_path = scratch_json("verify_consistency");
+    let out = Command::new(bin())
+        .args([
+            "verify",
+            "--consistency",
+            "--ledger",
+            fixture("data/ledger.jsonl").to_str().unwrap(),
+            "--json-out",
+            json_path.to_str().unwrap(),
+        ])
+        .output()
+        .expect("spawn ulpf verify --consistency --json-out");
+    assert_eq!(out.status.code(), Some(1));
+    std::fs::remove_dir_all(json_path.parent().unwrap()).ok();
+}
+
+/// #57: `inspect --json-out` writes the serve `GET /blocks/:id/records`
+/// shape (event_id UUIDv7, raw_log, raw_hash, ocsf — what #14 renders) with
+/// stdout byte-identical to the no-flag run.
+#[test]
+fn inspect_json_out_matches_serve_records_shape() {
+    let json_path = scratch_json("inspect");
+    let with_flag = Command::new(bin())
+        .args([
+            "inspect",
+            "--file",
+            fixture("data/parquet/block_00001.parquet")
+                .to_str()
+                .unwrap(),
+            "--count",
+            "2",
+            "--json-out",
+            json_path.to_str().unwrap(),
+        ])
+        .output()
+        .expect("spawn ulpf inspect --json-out");
+    assert_eq!(with_flag.status.code(), Some(0));
+    let payload: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&json_path).unwrap())
+            .expect("inspect json-out must be valid JSON");
+    assert_eq!(payload.get("block_id").and_then(|v| v.as_u64()), Some(1));
+    assert_eq!(
+        payload
+            .get("total_records_in_block")
+            .and_then(|v| v.as_u64()),
+        Some(1000)
+    );
+    let records = payload
+        .get("records")
+        .and_then(|v| v.as_array())
+        .expect("payload must carry records");
+    assert_eq!(records.len(), 2, "--count 2 must export 2 records");
+    for rec in records {
+        for key in ["event_id", "raw_log", "raw_hash", "ocsf"] {
+            assert!(
+                rec.get(key).is_some(),
+                "record must carry {key} (the #14 shape): {rec}"
+            );
+        }
+        // UUIDv7 forensic ids: 36-char hyphenated UUIDs.
+        let id = rec.get("event_id").and_then(|v| v.as_str()).unwrap();
+        assert_eq!(id.len(), 36, "event_id must be a UUID string: {id}");
+        assert!(
+            rec.get("ocsf").and_then(|v| v.get("disposition")).is_some(),
+            "ocsf must be the parsed object, not a string: {rec}"
+        );
+    }
+
+    let plain = Command::new(bin())
+        .args([
+            "inspect",
+            "--file",
+            fixture("data/parquet/block_00001.parquet")
+                .to_str()
+                .unwrap(),
+            "--count",
+            "2",
+        ])
+        .output()
+        .expect("spawn ulpf inspect (no flag)");
+    assert_eq!(
+        with_flag.stdout, plain.stdout,
+        "inspect stdout must be byte-identical with and without --json-out"
+    );
+
+    std::fs::remove_dir_all(json_path.parent().unwrap()).ok();
 }
