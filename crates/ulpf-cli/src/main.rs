@@ -26,7 +26,6 @@ use ulpf_core::ingest::socket::{
 use ulpf_core::ingest::{BackpressurePolicy, LogQueue, MemoryQueue};
 
 use ulpf_core::parser::lru_cache::LruStats;
-use ulpf_core::parser::UniversalParser;
 use ulpf_core::schema::ocsf::NetworkActivity;
 use ulpf_integrity::batcher::{BatchAccumulator, BatcherConfig, IncomingLog};
 use ulpf_integrity::storage::ParquetCompression;
