@@ -23,13 +23,13 @@ Each metric below shows how it is graded: the exact definition, the line in [`cr
 
 **Ground-truth policy:** where a sidecar exists it wins over in-line derivation (`:1693–1703`), because fuzz mutations destroy the in-line markers. On the adversarial and holdout corpora the sidecar is therefore the only reliable ground truth left. The core corpus (1,720 lines) has no sidecar; its GT comes from the lines themselves. Sidecars exist for adversarial (757), holdout (200) and full-scale (224,657 — see the 1,000,000-correct-field table in the README headline results).
 
-† **About the old name "Macro F1":** this number is the mean of five exact-match field accuracies (`evaluator.rs:1970`), never a precision/recall F1 — the label is retired in code and every re-runnable report. The frozen holdout report (`docs/benchmarks/eval_holdout_report.md`, P8) and the historical logs (`docs/archive/OVERHAUL_PLAN.md`, `FULL_DATASET_RESULTS.md`) still carry the old label; read it as mean field accuracy.
+† **About the old name "Macro F1":** this number is the mean of five exact-match field accuracies (`evaluator.rs:1970`), never a precision/recall F1 — the label is retired in code and every re-runnable report. The frozen holdout report (`benchmarks/eval_holdout_report.md`, frozen at evaluation cutoff) and the historical logs (`docs/archive/OVERHAUL_PLAN.md`, `FULL_DATASET_RESULTS.md`) still carry the old label; read it as mean field accuracy.
 
 ### Benchmark ritual (the stopwatch rules — condensed)
 
 Latency/throughput rows are only comparable when measured the same way: idle machine (`uptime` 1-min loadavg < `nproc`), `--release` binary, pinned `--threads` (same value both engines), median of 3 runs per corpus, always the same-run baseline-vs-tiered ratio — absolute µs never stands alone (same corpus seen 73 µs idle → 1,104 µs busy). Noise band: same-run ratios within ~10%; absolute µs not comparable across machines. Small-corpus tiered throughput 0.82–0.97× is **designed** (Drain bookkeeping the pure baseline skips; tiers pay off at scale — 2.15× at 224k), not chased. Ritual enforced by [`scripts/bench.sh`](../scripts/bench.sh); canonical text in `AGENTS.md` Gotchas.
 
-## 4.1 Core corpus — 1,720 committed fixture lines · [`eval_hardcore_report.md`](../benchmarks/eval_hardcore_report.md)
+## 4.1 Core corpus — 1,720 committed fixture lines · [`eval_hardcore_report.md`](benchmarks/eval_hardcore_report.md)
 
 | Metric | Baseline | 3-Tier | Delta |
 | :--- | ---: | ---: | :---: |
@@ -42,7 +42,7 @@ Latency/throughput rows are only comparable when measured the same way: idle mac
 | Unique templates (compression) | 1,407 | **73** | **19.3× fewer** |
 | Audit-dump mismatches | — | **0 / 1,720** | clean |
 
-## 4.2 Full scale — 224,657 lines / 183 MB · [`eval_full_report.md`](../benchmarks/eval_full_report.md)
+## 4.2 Full scale — 224,657 lines / 183 MB · [`eval_full_report.md`](benchmarks/eval_full_report.md)
 
 | Metric | Baseline | 3-Tier | Delta |
 | :--- | ---: | ---: | :---: |
@@ -53,7 +53,7 @@ Latency/throughput rows are only comparable when measured the same way: idle mac
 | Sidecar GT (5 field keys) | — | **1,000,000 correct · 0 wrong** | exact match |
 | Audit-dump mismatches | — | **0 / 224,657** | clean |
 
-## 4.3 Adversarial corpus (deterministic fuzz) · [`eval_adversarial_report.md`](../benchmarks/eval_adversarial_report.md)
+## 4.3 Adversarial corpus (deterministic fuzz) · [`eval_adversarial_report.md`](benchmarks/eval_adversarial_report.md)
 
 | Metric | Baseline | 3-Tier | Note |
 | :--- | ---: | ---: | :--- |
@@ -63,7 +63,7 @@ Latency/throughput rows are only comparable when measured the same way: idle mac
 | Action Inviolability | N/A | **100% preserved** | anchor tokens held under fuzz |
 | GT fields wrong | 1,512 | **1,512 (identical)** | fuzzer-caused; engine delta = 0 |
 
-## 4.4 Frozen holdout (unseen vendors, executed once at evaluation cutoff) · [`eval_holdout_report.md`](../benchmarks/eval_holdout_report.md)
+## 4.4 Frozen holdout (unseen vendors, executed once at evaluation cutoff) · [`eval_holdout_report.md`](benchmarks/eval_holdout_report.md)
 
 | Metric | Baseline | 3-Tier |
 | :--- | ---: | ---: |
@@ -77,7 +77,7 @@ Latency/throughput rows are only comparable when measured the same way: idle mac
 
 ## Latency spectrum & template compression
 
-Full-scale percentile sweep ([`eval_full_report.md`](../benchmarks/eval_full_report.md) §2):
+Full-scale percentile sweep ([`eval_full_report.md`](benchmarks/eval_full_report.md) §2):
 
 | Percentile | Baseline | 3-Tier | Reduction |
 | :--- | ---: | ---: | ---: |

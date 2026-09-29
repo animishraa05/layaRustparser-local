@@ -78,7 +78,7 @@ One socket holds 50k EPS loss-free (measured). Past that UDP drops in
 the kernel, TCP backpressures the sender with zero loss, and the queue
 sheds only under opt-in `--drop-on-full` — every path counted on the
 live reporter. 500k on one socket was not reached; the run log and the
-repro recipe are [`docs/INGEST_LIMITS.md`](docs/INGEST_LIMITS.md).
+repro recipe are [`INGEST_LIMITS.md`](INGEST_LIMITS.md).
 
 #### SIH Deliverables Checklist:
 * [x] **Source Code:** Complete modular Rust workspace with zero compiler warnings.
