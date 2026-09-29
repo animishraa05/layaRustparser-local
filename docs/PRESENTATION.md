@@ -61,7 +61,7 @@
 ---
 
 ### SLIDE 5: Empirical Benchmarks & Production Readiness
-*(SRS §3 verdicts table — every row below traces to a committed `docs/benchmarks/` report row)*
+*(SRS §3 verdicts table — every row below traces to a committed `benchmarks/` report row)*
 
 | Metric / Parameter | Industry Baseline (Logstash/Fluentd) | ULPF Rust Engine | Advantage |
 | :--- | :--- | :--- | :--- |
