@@ -9,7 +9,7 @@ tracking issue. No silent TODOs.
 | 2 | License | done | [`LICENSE`](../../LICENSE) (Apache-2.0), labelled on the image (`Dockerfile`) |
 | 3 | Requirements traceability (SRS) | done | [`docs/SRS.md`](../SRS.md) — canonical verdicts for NTRO (a)–(k) |
 | 4 | Architecture doc | done | [`docs/ARCHITECTURE_FINAL.md`](../ARCHITECTURE_FINAL.md) |
-| 5 | Measured scorecards | done | [`docs/benchmarks/`](../benchmarks/) + [`docs/SCORECARDS.md`](../SCORECARDS.md) |
+| 5 | Measured scorecards | done | [`benchmarks/`](../benchmarks/) + [`docs/SCORECARDS.md`](../SCORECARDS.md) |
 | 6 | Pitch script (5 slides) | done | [`docs/PRESENTATION.md`](../PRESENTATION.md), each slide cites an SRS clause |
 | 7 | Pitch deck artifact (PPTX/PDF/HTML) | todo | Owner: TBD — comment on [#51](https://github.com/guptchar/layaRustparser/issues/51) to claim. deliberate: no binary decks in git without a regen path. Printable PDFs live in [`docs/releases/`](../releases/) meanwhile. |
 | 8 | Demo video | todo | Owner: TBD — comment on [#51](https://github.com/guptchar/layaRustparser/issues/51) to claim. Script is done: [`docs/DEMO.md`](../DEMO.md), one-command run via `scripts/run_demo.sh`. |

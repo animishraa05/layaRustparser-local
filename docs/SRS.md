@@ -7,7 +7,7 @@ This document is the canonical requirements verdict. The short matrix in the roo
 
 - **Requirement text:** quoted verbatim from the NTRO problem statement via the
   dossier's §4 rows. Never restated.
-- **Measured results:** every number cites a committed `docs/benchmarks/eval_*_report.md`
+- **Measured results:** every number cites a committed `benchmarks/eval_*_report.md`
   §1/§1b row. Core/adversarial/full numbers are the 2026-09-28 re-measure (#46);
   the holdout report is frozen at 2026-09-24 by design and never re-run.
 - **Timing rows** follow the benchmark ritual (`AGENTS.md` Gotchas): same-run
