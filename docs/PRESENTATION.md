@@ -1,5 +1,5 @@
 # Universal Log Pre-processing Framework (ULPF)
-## Technical Evaluation Presentation (NTRO / SIH26156) — 5 Slides
+## Technical Evaluation Presentation (NTRO) — 5 Slides
 
 > Slide → requirement map: every slide cites its SRS clause in [`SRS.md`](SRS.md). Numbers below must match the SRS verdicts; on any disagreement the SRS wins.
 
@@ -80,7 +80,7 @@ sheds only under opt-in `--drop-on-full` — every path counted on the
 live reporter. 500k on one socket was not reached; the run log and the
 repro recipe are [`INGEST_LIMITS.md`](INGEST_LIMITS.md).
 
-#### SIH Deliverables Checklist:
+#### Deliverables Checklist:
 * [x] **Source Code:** Complete modular Rust workspace with zero compiler warnings.
 * [x] **Setup Documentation:** `README.md` with 1-command Docker and local setup.
 * [x] **Architecture Document:** subsystem-by-subsystem improvement walkthrough in `docs/ARCHITECTURE_FINAL.md`.

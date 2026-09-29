@@ -6,11 +6,14 @@
 [![Schema](https://img.shields.io/badge/schema-OCSF%201.3-green.svg)](https://schema.ocsf.io/)
 [![Integrity](https://img.shields.io/badge/integrity-RFC%206962%20Merkle-purple.svg)](https://datatracker.ietf.org/doc/html/rfc6962)
 [![Air--Gap](https://img.shields.io/badge/deployment-100%25%20Air--Gapped-red.svg)](#air-gapped-deployment)
-[![Size](https://img.shields.io/badge/binary-22.8%20MB%20%3C%2035%20MB%20req-orange.svg)](#sih26156-requirements-matrix)
+[![Size](https://img.shields.io/badge/binary-22.8%20MB%20%3C%2035%20MB%20req-orange.svg)](#requirements-matrix)
 [![Repo](https://img.shields.io/badge/github-guptchar%2FlayaRustparser-blue.svg)](https://github.com/guptchar/layaRustparser)
 [![CI](https://github.com/guptchar/layaRustparser/actions/workflows/ci.yml/badge.svg)](https://github.com/guptchar/layaRustparser/actions/workflows/ci.yml)
+[![DeepWiki](https://img.shields.io/badge/docs-DeepWiki-blue.svg)](https://deepwiki.com/guptchar/layaRustparser)
 
 A high-performance, vendor-agnostic, containerized, strictly **air-gapped Universal Log Pre-processing Framework** written in **Rust**. ULPF ingests heterogeneous perimeter firewall logs, normalizes them into **OCSF 1.3 NetworkActivity (Class 4001)**, and cryptographically guarantees non-repudiation with **RFC 6962 Merkle trees** anchored into columnar **Apache Parquet WORM** storage — with every raw byte preserved, hash-for-hash, forever.
+
+New here? Ask questions about the codebase in plain English on our [DeepWiki](https://deepwiki.com/guptchar/layaRustparser) (in-repo docs are authoritative on any disagreement).
 
 ![ULPF end-to-end flow: raw syslog/JSON/CSV -> classify -> zero-copy parse -> OCSF 1.3 JSON -> Parquet WORM + verify, with SHA-256(raw) / UUIDv7 -> RFC 6962 Merkle root -> ledger.jsonl provenance branch](docs/diagrams/hero-flow.png)
 
@@ -63,7 +66,7 @@ Full argument, shipper-by-shipper comparison, the [vendor support matrix](docs/W
 
 ![ULPF 3-tier pipeline: UDP/TCP syslog into Tier-1 LRU, Tier-2 Drain miner, Tier-3 Laya engine, then zero-copy extractors -> OCSF 1.3 event -> batcher -> SHA-256 + UUIDv7 + Merkle leaf -> ledger.jsonl and Parquet WORM -> ulpf verify 0/1/2](docs/diagrams/three-tier-pipeline.png)
 
-**From proposal to production.** The original SIH proposal ([`Ulpf-proposal.pdf`](docs/reference/Ulpf-proposal.pdf)) sketched a Python stack — Redpanda queue, WASM parser plugins, an offline LLM for mask synthesis, ClickHouse lake. What shipped is leaner: air-gap and determinism killed the LLM (non-deterministic outputs break forensic reproducibility), the queue (in-memory buffering suffices at this scale), and the plugins (native Rust needs no sandbox). What survived: OCSF as the single schema, Drain as the clustering core, lossless raw retention:
+**From proposal to production.** The original proposal ([`Ulpf-proposal.pdf`](docs/reference/Ulpf-proposal.pdf)) sketched a Python stack — Redpanda queue, WASM parser plugins, an offline LLM for mask synthesis, ClickHouse lake. What shipped is leaner: air-gap and determinism killed the LLM (non-deterministic outputs break forensic reproducibility), the queue (in-memory buffering suffices at this scale), and the plugins (native Rust needs no sandbox). What survived: OCSF as the single schema, Drain as the clustering core, lossless raw retention:
 
 ![Theoretical proposal in red engineered into the shipped ULPF pipeline in green](docs/diagrams/proposal-vs-reality.png)
 
@@ -106,7 +109,7 @@ cargo test --workspace --no-fail-fast
 
 **Latest local run (2026-09-29): clippy 0 warnings · fmt clean · `253 passed · 1 failed · 1 ignored`.** The 1 failure is the known load-flaky micro-benchmark below (passes on idle re-run; CI skips it) — not a regression. Coverage: parser field accuracy + byte-exact SHA-256 per vendor, Drain anchor-token inviolability, the vanilla-vs-3-tier duel, tier behaviour, Merkle/tamper/exit-code contracts, CLI smoke tests, evaluator GT grading, air-gapped onboarder. The single `ignored` test is the frozen holdout (`test_holdout_novelty_end_to_end_at_freeze` in `crates/ulpf-ai/tests/ai_tests.rs`, ignored at the evaluation freeze) — run once at freeze via `cargo test -p ulpf-ai -- --ignored test_holdout`. The load-sensitive micro-benchmark (`test_classification_sub_microsecond_benchmark`, asserts < 2 µs/classification in a debug build) is **CI-skipped, not ignored** (`--skip` in `ci.yml`) and flakes on busy machines — re-run before assuming breakage ([`AGENTS.md`](AGENTS.md) Gotchas). For a fresh count: `cargo test --workspace --no-fail-fast`.
 
-## SIH26156 requirements matrix
+## Requirements matrix
 
 | # | Requirement (verbatim from [`docs/archive/SIH_EVALUATION_DOSSIER.md`](docs/archive/SIH_EVALUATION_DOSSIER.md)) | Status | Evidence |
 | :--- | :--- | :---: | :--- |
@@ -237,7 +240,7 @@ Full index: [`docs/README.md`](docs/README.md) (every doc, one row each). Short 
 | [`data/fixtures/api/`](data/fixtures/api/) | Sample mock JSON for the serve contract |
 | [`data/raw/duel/README.md`](data/raw/duel/README.md) | Frozen duel inputs + ground-truth provenance |
 | [`docs/archive/`](docs/archive/) | Superseded, do not cite: [`OVERHAUL_PLAN.md`](docs/archive/OVERHAUL_PLAN.md) (P1–P10 log, not a spec) · [`ARCHITECTURE.md`](docs/archive/ARCHITECTURE.md) · [`SIH_EVALUATION_DOSSIER.md`](docs/archive/SIH_EVALUATION_DOSSIER.md) · [`SIMPLIFIED_EXPLANATION_AND_BENCHMARKS.md`](docs/archive/SIMPLIFIED_EXPLANATION_AND_BENCHMARKS.md) |
-| [`docs/releases/`](docs/releases/) | Frozen submission PDFs: [`ULPF_Architecture_and_Benchmarks_Guide.pdf`](docs/releases/ULPF_Architecture_and_Benchmarks_Guide.pdf) · [`ULPF_SIH_Evaluation_Dossier_BW.pdf`](docs/releases/ULPF_SIH_Evaluation_Dossier_BW.pdf) · [`README.md`](docs/releases/README.md) (regen recipe) |
+| [`docs/releases/`](docs/releases/) | Frozen submission PDFs: [`ULPF_Architecture_and_Benchmarks_Guide.pdf`](docs/releases/ULPF_Architecture_and_Benchmarks_Guide.pdf) · [`ULPF_Evaluation_Dossier_BW.pdf`](docs/releases/ULPF_Evaluation_Dossier_BW.pdf) · [`README.md`](docs/releases/README.md) (regen recipe) |
 | [`docs/reference/Ulpf-proposal.pdf`](docs/reference/Ulpf-proposal.pdf) | Original proposal — overruled where `ARCHITECTURE_FINAL.md` says so |
 | Repo config | CI and forms, each filed once in `docs/README.md`: [`.github/workflows/`](.github/workflows/) · [`.github/ISSUE_TEMPLATE/`](.github/ISSUE_TEMPLATE/) · [`pull_request_template.md`](.github/pull_request_template.md) · [`dependabot.yml`](.github/dependabot.yml) · [`.coderabbit.yaml`](.coderabbit.yaml) · [`docker-compose.yml`](docker-compose.yml) |
 | Frontend notes | Dashboard-track docs, each filed once in `docs/README.md`: [`frontend/laya-frontend/README.md`](frontend/laya-frontend/README.md) and sibling notes |

@@ -29,9 +29,9 @@ Submission exports (`releases/` — frozen PDFs, print from the template named i
 | Doc | What it is |
 | :--- | :--- |
 | [`releases/ULPF_Architecture_and_Benchmarks_Guide.pdf`](releases/ULPF_Architecture_and_Benchmarks_Guide.pdf) | Colour architecture + benchmarks guide. Source: `pdf_template.html`. |
-| [`releases/ULPF_SIH_Evaluation_Dossier_BW.pdf`](releases/ULPF_SIH_Evaluation_Dossier_BW.pdf) | Monochrome evaluation dossier for printing. Source: `pdf_bw_template.html`. |
+| [`releases/ULPF_Evaluation_Dossier_BW.pdf`](releases/ULPF_Evaluation_Dossier_BW.pdf) | Monochrome evaluation dossier for printing. Source: `pdf_bw_template.html`. |
 | [`releases/README.md`](releases/README.md) | One-line regeneration recipe (headless-Chrome print-to-PDF). |
-| [`submission/CHECKLIST.md`](submission/CHECKLIST.md) | SIH submission checklist — every line done or owner + issue link. |
+| [`submission/CHECKLIST.md`](submission/CHECKLIST.md) | Submission checklist — every line done or owner + issue link. |
 
 History (`archive/` — superseded, do not cite or implement from):
 

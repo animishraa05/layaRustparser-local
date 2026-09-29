@@ -1,5 +1,5 @@
 # Detailed Technical Comparison: Implemented System vs. Proposed Concept
-**Theme:** Blockchain & Cybersecurity (SIH26156)  
+**Theme:** Blockchain & Cybersecurity  
 **Target Organization:** National Technical Research Organisation (NTRO)  
 **Scope:** Heterogeneous Perimeter Network Device Ingestion, OCSF 1.3 Normalization, RFC 6962 Merkle Tree Integrity, & Air-Gapped Heuristic AI Onboarding
 
@@ -279,9 +279,9 @@ We engineered a **100% Air-Gapped Deterministic Heuristic Synthesizer** ([`crate
 
 ---
 
-## 4. Summary Scorecard: SIH26156 Requirements Compliance
+## 4. Summary Scorecard: Requirements Compliance
 
-| SIH Requirement | Problem Statement Specification | Implementation Verification |
+| Requirement | Problem Statement Specification | Implementation Verification |
 | :---: | :--- | :---: |
 | **(a)** | Preserve complete raw event data without loss | **100% Covered** (`metadata.raw_data` + raw SHA-256) |
 | **(b)** | Extract and parse source-specific attributes | **100% Covered** (Zero-copy extractors for Cisco, Fortinet, PAN-OS, Suricata, pfSense) |

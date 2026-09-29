@@ -1,4 +1,4 @@
-# ULPF Software Requirements Specification (NTRO / SIH26156)
+# ULPF Software Requirements Specification (NTRO)
 
 Traceability from each NTRO requirement to design, code, test, and measured result.
 This document is the canonical requirements verdict. The short matrix in the root

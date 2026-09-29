@@ -20,7 +20,7 @@ The implementation must cover:
 
 **Design → Frontend → Components → API integration → Mock/fixture mode → Live backend mode → Loading/Error/Empty states → Testing**
 
-The final result should be a usable analyst dashboard for the SIH demonstration.
+The final result should be a usable analyst dashboard for the demonstration.
 
 ---
 
@@ -1482,7 +1482,7 @@ Do not introduce unnecessary:
 
 Use the existing stack.
 
-Keep the architecture understandable for a student SIH team.
+Keep the architecture understandable for a student team.
 
 ---
 

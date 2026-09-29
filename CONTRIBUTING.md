@@ -1,6 +1,6 @@
 # Contributing to ULPF
 
-6-person SIH team workflow. Read `AGENTS.md` (invariants + gotchas) first, then pick unclaimed work from the [GitHub issue tracker](https://github.com/guptchar/layaRustparser/issues).
+Team workflow. Read `AGENTS.md` (invariants + gotchas) first, then pick unclaimed work from the [GitHub issue tracker](https://github.com/guptchar/layaRustparser/issues).
 
 ## How work flows (read this before anything else)
 

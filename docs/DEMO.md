@@ -1,5 +1,5 @@
 # Universal Log Pre-processing Framework (ULPF)
-## 2-Minute Demonstration Script & Walkthrough (NTRO / SIH26156)
+## 2-Minute Demonstration Script & Walkthrough (NTRO)
 
 ### Video Title: ULPF — Universal Log Pre-processing & Cryptographic Integrity Fabric
 **Target Duration:** 120 Seconds (2 Minutes)  
