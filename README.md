@@ -112,7 +112,7 @@ cargo test --workspace --no-fail-fast
 | :--- | :--- | :---: | :--- |
 | a | Preserve complete raw event data without information loss | yes | `raw_log` byte-exact + `raw_hash == SHA-256(raw)` on **all 224,657** full-scale lines |
 | b | Extract and parse source-specific attributes | yes | zero-copy extractors (ASA/FortiGate/PAN-OS/pfSense/Suricata/CEF) — **mean field accuracy 100%** on core & full ([rulers](docs/SCORECARDS.md#how-every-metric-is-measured-the-rulers)) |
-| c | Normalize fields into a common event taxonomy | yes | OCSF 1.3 `NetworkActivity` 4001 — **100% VCA** on core, adversarial-vendor-match, full |
+| c | Normalize fields into a common event taxonomy | yes | OCSF 1.3 `NetworkActivity` 4001 — **VCA 100%** on core + full; **96.30%** on adversarial fuzz (mutated prefixes, baseline parity) |
 | d | Maintain traceability between normalized and original events | yes | UUIDv7 `event_id` + SHA-256 digest on every event; `inspect` demo (quick start 6) |
 | e | Plug-and-play onboarding of new log sources | yes | `ulpf onboard` — 3–5 sample lines → validated parser spec, zero network (quick start 7, full procedure: [`docs/ONBOARDING_RUNBOOK.md`](docs/ONBOARDING_RUNBOOK.md)) |
 | f | Unified visibility across enterprise environments | yes | 5 vendor families → uniform OCSF JSON + Parquet schema ([data locations](#data-locations--programmatic-access)) |
@@ -120,9 +120,9 @@ cargo test --workspace --no-fail-fast
 | h | AI/ML-ready security and operational analytics | yes | **32 Drain templates from 224,657 lines (4,312× compression)** — pre-clustered feature IDs ([scorecards](docs/SCORECARDS.md)) |
 | i | Reduced parser development effort | yes | sample file → parser spec in **ms**, not days (quick start 7, [`docs/ONBOARDING_RUNBOOK.md`](docs/ONBOARDING_RUNBOOK.md)) |
 | j | Deployable in an air-gapped network | yes | single self-contained binaries, **zero** outbound calls anywhere in the runtime path |
-| k | Packaged in a container for platform independence (target < 35 MB) | partial | binary **18.6 MB, within the 35 MB target** (`ls -la target/release/ulpf`); container slim-down in progress — roadmap P10.7 |
+| k | Packaged in a container for platform independence (target < 35 MB) | partial | binary **≈ 22.8 MB on disk, inside the 35 MB target** (published 18.6 MB badge is stale — [#45](https://github.com/guptchar/layaRustparser/issues/45)); image itself still over target — slim-down is roadmap P10.7 |
 
-Full dossier with per-requirement narrative: [`docs/archive/SIH_EVALUATION_DOSSIER.md`](docs/archive/SIH_EVALUATION_DOSSIER.md).
+Canonical verdicts with design, code, tests, and measured rows: [`docs/SRS.md`](docs/SRS.md). (The older tables in [`docs/archive/SIH_EVALUATION_DOSSIER.md`](docs/archive/SIH_EVALUATION_DOSSIER.md) §4 and [`docs/ARCHITECTURE_FINAL.md`](docs/ARCHITECTURE_FINAL.md) §4 are superseded/corrected to match it.)
 
 ## Air-gapped deployment
 

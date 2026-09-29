@@ -70,6 +70,12 @@ During empirical benchmarking on an Intel Core i5-12500H laptop (12 cores, 16 th
 
 ## 4. SIH26156 Requirements Compliance Audit (Is It Covering All?)
 
+> **SUPERSEDED.** This table's verdicts (in particular row **(k)**, marked covered
+> here) are replaced by the canonical traceability in [`../SRS.md`](../SRS.md),
+> which keeps the verdicts, corrects (k) to **partial**, and cites committed
+> `docs/benchmarks/` report rows per requirement. The text below is preserved
+> as history — do not cite it for current status.
+
 The Smart India Hackathon problem statement for the Universal Log Pre-processing Framework (SIH26156 / NTRO) outlines **11 specific expected capabilities** (items `a` through `k`).
 
 Below is the verified compliance matrix proving that **100% of requirements are fully satisfied**:

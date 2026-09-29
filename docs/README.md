@@ -2,6 +2,7 @@
 
 | Doc | What it is |
 | :--- | :--- |
+| [`SRS.md`](SRS.md) | **Canonical** NTRO (a)–(k) traceability: design, code, test, measured row, honest verdict per requirement. |
 | [`ARCHITECTURE_FINAL.md`](ARCHITECTURE_FINAL.md) | Canonical architecture: original proposal → why it fails in practice → what we built. Read this first. |
 | [`SCORECARDS.md`](SCORECARDS.md) | Metric rulers, per-corpus scorecards, latency spectrum, forensic guarantees. |
 | [`CONTRACTS.md`](CONTRACTS.md) | Serve REST contract per endpoint + which mock fixture each page codes against. |
@@ -29,6 +30,7 @@ Submission exports (`releases/` — frozen PDFs, print from the template named i
 | [`releases/ULPF_Architecture_and_Benchmarks_Guide.pdf`](releases/ULPF_Architecture_and_Benchmarks_Guide.pdf) | Colour architecture + benchmarks guide. Source: `pdf_template.html`. |
 | [`releases/ULPF_SIH_Evaluation_Dossier_BW.pdf`](releases/ULPF_SIH_Evaluation_Dossier_BW.pdf) | Monochrome evaluation dossier for printing. Source: `pdf_bw_template.html`. |
 | [`releases/README.md`](releases/README.md) | One-line regeneration recipe (headless-Chrome print-to-PDF). |
+| [`submission/CHECKLIST.md`](submission/CHECKLIST.md) | SIH submission checklist — every line done or owner + issue link. |
 
 History (`archive/` — superseded, do not cite or implement from):
 

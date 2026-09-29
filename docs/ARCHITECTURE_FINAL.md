@@ -294,7 +294,10 @@ We engineered a **100% Air-Gapped Deterministic Heuristic Synthesizer** ([`crate
 | **(h)** | AI/ML-ready security and operational analytics | **100% Covered** (Columnar storage + Drain3 structural cluster IDs) |
 | **(i)** | Reduced parser development effort | **100% Covered** (Parser creation slashed from days to < 4 milliseconds) |
 | **(j)** | Deployable in an air-gapped network | **100% Covered** (100% self-contained native Rust; zero cloud APIs; zero GPU weights) |
-| **(k)** | Packaged in a container for platform independence | **100% Covered** (Multi-stage Docker build producing < 35 MB lean image) |
+| **(k)** | Packaged in a container for platform independence | **Partial** (binary ≈ 22.8 MB meets the < 35 MB target; image slim-down open — see [`SRS.md`](SRS.md) §3.k and issue #45) |
+
+> **Note (2026-09-29):** row (k) was corrected from "100% Covered" to Partial;
+> per-requirement verdicts now live in [`SRS.md`](SRS.md), which this table defers to.
 
 **Conclusion:** All 11 expected requirements (100%) are fully implemented, verified, and demonstrated in production Rust code.
 

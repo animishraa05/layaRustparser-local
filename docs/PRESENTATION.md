@@ -1,9 +1,12 @@
 # Universal Log Pre-processing Framework (ULPF)
 ## Technical Evaluation Presentation (NTRO / SIH26156) — 5 Slides
 
+> Slide → requirement map: every slide cites its SRS clause in [`SRS.md`](SRS.md). Numbers below must match the SRS verdicts; on any disagreement the SRS wins.
+
 ---
 
 ### SLIDE 1: The Challenge — Perimeter Log Chaos & The Forensic Gap
+*(SRS §3.b, §3.c, §3.f — heterogeneity · §3.d, §3.g — forensic gap)*
 
 #### The Problem
 * **Perimeter Heterogeneity:** Modern enterprise perimeters deploy firewalls, VPNs, and IDS/IPS from diverse vendors (Cisco ASA, Fortinet FortiGate, Palo Alto PAN-OS, pfSense, Suricata). Each emits logs in conflicting formats: RFC 3164 Syslog, CEF, Key-Value, CSV, and JSON.
@@ -16,6 +19,7 @@
 ---
 
 ### SLIDE 2: The Data Plane — Two-Tier Zero-Copy Ingestion & OCSF 1.3
+*(SRS §3.a — lossless · §3.b, §3.c — extract + normalize · §3.d — UUIDv7 traceability · §3.f — unified schema)*
 
 #### Architectural Workflow
 1. **Async Multi-Threaded Ingestion:** Tokio worker pool bound with `SO_REUSEPORT` on UDP/TCP ports, processing incoming packets with zero buffer copies.
@@ -28,6 +32,7 @@
 ---
 
 ### SLIDE 3: The Integrity Plane — RFC 6962 Merkle Trees & Parquet WORM
+*(SRS §3.d — traceability binding · §3.g — Parquet WORM + 186/186 verify PASS)*
 
 #### Solving the Tamper Problem
 * **RFC 6962 Standard:** Implements the Certificate Transparency cryptographic standard:
@@ -40,6 +45,7 @@
 ---
 
 ### SLIDE 4: The AI Plane — Drain3 Clustering & Air-Gapped Onboarding
+*(SRS §3.e, §3.i — onboarding · §3.h — Drain analytics · §3.j — air-gap)*
 
 #### Microsecond Structural Anomaly Detection
 * **Drain3 Template Miner (LogPai):** Runs directly on CPU in native Rust with $< 5\,\mu\text{s}$ latency per event.
@@ -55,6 +61,7 @@
 ---
 
 ### SLIDE 5: Empirical Benchmarks & Production Readiness
+*(SRS §3 verdicts table — every row below traces to a committed `docs/benchmarks/` report row)*
 
 | Metric / Parameter | Industry Baseline (Logstash/Fluentd) | ULPF Rust Engine | Advantage |
 | :--- | :--- | :--- | :--- |
@@ -63,7 +70,7 @@
 | **Memory Footprint** | 1.8 GB – 3.5 GB (JVM Heap) | **< 180 MB RSS** | **90% Less Memory** |
 | **Forensic Integrity** | Basic per-log hash (No deletion proof) | **RFC 6962 Merkle Tree ($O(\log N)$)** | **Provable Non-Repudiation** |
 | **Compression Ratio** | 45% (Gzip raw) | **> 82% (Parquet + Snappy)** | **3.8x Storage Savings** |
-| **Deployment Mode** | Cloud-dependent dependencies | **100% Air-Gapped Docker (< 40MB)** | **Zero External Network Calls** |
+| **Deployment Mode** | Cloud-dependent dependencies | **100% Air-Gapped Docker** (image slim-down in progress — SRS §3.k: partial) | **Zero External Network Calls** |
 
 #### SIH Deliverables Checklist:
 * [x] **Source Code:** Complete modular Rust workspace with zero compiler warnings.
