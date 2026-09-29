@@ -18,7 +18,10 @@ use ulpf_ai::drain::{AlertSeverity, AnomalyType};
 use ulpf_ai::evaluator::{load_sidecar_gt, EvaluatorEngine, GtOverrides};
 use ulpf_ai::onboarder::{DynamicParserRegistry, Onboarder};
 use ulpf_ai::pipeline::TieredPipeline;
-use ulpf_core::ingest::socket::{create_tcp_listener, create_udp_socket};
+use ulpf_core::ingest::socket::{
+    create_tcp_listener, create_udp_socket, tcp_listener_rcvbuf, udp_socket_rcvbuf,
+    INGEST_RCVBUF_BYTES,
+};
 use ulpf_core::ingest::{BackpressurePolicy, LogQueue, MemoryQueue};
 
 use ulpf_core::parser::UniversalParser;
@@ -610,6 +613,12 @@ async fn run_ingest(args: IngestArgs) -> Result<()> {
     // Spawn UDP Listener
     let udp_addr: SocketAddr = args.udp.parse().context("Invalid UDP address")?;
     let udp_socket = create_udp_socket(udp_addr, args.reuse_port)?;
+    // Effective kernel buffers, read back after the explicit set: Linux
+    // doubles the request for bookkeeping and clamps to rmem_max, so the
+    // banner prints what the sockets actually got, not what was asked.
+    // Full capacity story (knee, drops, per-transport policy) lives in
+    // docs/INGEST_LIMITS.md.
+    let udp_rcvbuf = udp_socket_rcvbuf(&udp_socket).unwrap_or(0);
     let queue_udp = queue.clone();
     let total_ingested_udp = total_ingested.clone();
 
@@ -643,6 +652,12 @@ async fn run_ingest(args: IngestArgs) -> Result<()> {
     // Spawn TCP Listener
     let tcp_addr: SocketAddr = args.tcp.parse().context("Invalid TCP address")?;
     let tcp_listener = create_tcp_listener(tcp_addr, args.reuse_port, 1024)?;
+    let tcp_rcvbuf = tcp_listener_rcvbuf(&tcp_listener).unwrap_or(0);
+    println!(
+        "  Socket RcvBuf     : UDP {} bytes | TCP listener {} bytes (requested {}; \
+         kernel reports doubled; accepted TCP streams inherit the listener's)",
+        udp_rcvbuf, tcp_rcvbuf, INGEST_RCVBUF_BYTES,
+    );
     let queue_tcp = queue.clone();
     let total_ingested_tcp = total_ingested.clone();
 
@@ -693,6 +708,11 @@ async fn run_ingest(args: IngestArgs) -> Result<()> {
     let flush_dropped_stats = flush_dropped.clone();
     let flush_dropped_bytes_stats = flush_dropped_bytes.clone();
     let worker_parsed_stats = worker_parsed.clone();
+    // Static capacity gauges for the reporter: queue bound, kernel socket
+    // buffers, and the queue's high-water mark (peak depth since startup —
+    // the "how close to saturation" number). EPS capacity itself is a
+    // measured property, not a live one: docs/INGEST_LIMITS.md.
+    let queue_cap = args.queue_capacity;
 
     tokio::spawn(async move {
         let mut last_check = Instant::now();
@@ -723,8 +743,8 @@ async fn run_ingest(args: IngestArgs) -> Result<()> {
                 .count();
 
             println!(
-                "\x1b[32m[ULPF LIVE]\x1b[0m Ingest: \x1b[1;37m{:>7.0} EPS\x1b[0m | Total: \x1b[1;37m{:>8}\x1b[0m | Normalized OCSF: \x1b[1;32m{:>8}\x1b[0m | Blocks Anchored: \x1b[1;35m{:>4}\x1b[0m | Anomalies: \x1b[1;33m{:>3}\x1b[0m | Queue: \x1b[1;37m{:>5} msgs / {:>8} bytes\x1b[0m | Dropped: \x1b[1;31m{} ({} bytes)\x1b[0m | Pushed: \x1b[1;37m{}\x1b[0m Blocked: \x1b[1;37m{}\x1b[0m FlushQ: \x1b[1;37m{}/{}\x1b[0m | Workers: \x1b[1;37m{}/{}\x1b[0m",
-                eps, current, parsed, blocks, anomalies, qs.current_len, qs.queued_bytes, dropped, dropped_bytes, qs.pushed, qs.blocked, flush_depth_stats.load(Ordering::Relaxed), flush_capacity, engaged, worker_parsed_stats.len()
+                "\x1b[32m[ULPF LIVE]\x1b[0m Ingest: \x1b[1;37m{:>7.0} EPS\x1b[0m | Total: \x1b[1;37m{:>8}\x1b[0m | Normalized OCSF: \x1b[1;32m{:>8}\x1b[0m | Blocks Anchored: \x1b[1;35m{:>4}\x1b[0m | Anomalies: \x1b[1;33m{:>3}\x1b[0m | Queue: \x1b[1;37m{:>5}/{} msgs / {:>8} bytes (peak {:>8})\x1b[0m | Dropped: \x1b[1;31m{} ({} bytes)\x1b[0m | Pushed: \x1b[1;37m{}\x1b[0m Blocked: \x1b[1;37m{}\x1b[0m FlushQ: \x1b[1;37m{}/{}\x1b[0m | RcvBuf: \x1b[1;37m{}/{}\x1b[0m | Workers: \x1b[1;37m{}/{}\x1b[0m",
+                eps, current, parsed, blocks, anomalies, qs.current_len, queue_cap, qs.queued_bytes, qs.high_water_bytes, dropped, dropped_bytes, qs.pushed, qs.blocked, flush_depth_stats.load(Ordering::Relaxed), flush_capacity, udp_rcvbuf, tcp_rcvbuf, engaged, worker_parsed_stats.len()
             );
 
             last_check = now;

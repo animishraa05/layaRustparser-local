@@ -33,6 +33,19 @@ impl Default for IngestConfig {
     }
 }
 
+/// SO_RCVBUF requested on every ingest socket (UDP + TCP listener).
+///
+/// The kernel default on this machine class is ~208 KiB (212,992 bytes as
+/// reported by getsockopt, which doubles the real allocation for
+/// bookkeeping). At burst rates the socket task cannot drain a 208 KiB
+/// buffer fast enough and the kernel drops datagrams before userspace
+/// ever sees them — docs/INGEST_LIMITS.md has the measured knee.
+/// 4 MiB fits under the usual rmem_max (4,194,304) so an unprivileged
+/// set succeeds; where a machine caps lower, Linux clamps silently and
+/// the ingest banner reports the effective value, so the operator never
+/// has to guess which buffer they got.
+pub const INGEST_RCVBUF_BYTES: usize = 4 * 1024 * 1024;
+
 /// Create a non-blocking UDP socket with SO_REUSEPORT and SO_REUSEADDR enabled
 pub fn create_udp_socket(addr: SocketAddr, reuse_port: bool) -> io::Result<UdpSocket> {
     let domain = match addr {
@@ -47,10 +60,22 @@ pub fn create_udp_socket(addr: SocketAddr, reuse_port: bool) -> io::Result<UdpSo
         socket.set_reuse_port(true)?;
     }
 
+    // Best-effort: a clamped or default buffer still ingests, just with a
+    // lower burst ceiling. The ingest banner prints the effective value
+    // (see udp_socket_rcvbuf), so a silent clamp stays visible.
+    let _ = socket.set_recv_buffer_size(INGEST_RCVBUF_BYTES);
+
     socket.set_nonblocking(true)?;
     socket.bind(&addr.into())?;
     let std_socket: std::net::UdpSocket = socket.into();
     UdpSocket::from_std(std_socket)
+}
+
+/// Effective SO_RCVBUF of a bound UDP socket, as reported by the kernel.
+/// Linux doubles the requested value for bookkeeping — compare
+/// getsockopt-to-getsockopt, not to /proc/sys/net/core/rmem_default.
+pub fn udp_socket_rcvbuf(socket: &UdpSocket) -> io::Result<usize> {
+    socket2::SockRef::from(socket).recv_buffer_size()
 }
 
 /// Create a non-blocking TCP listener with SO_REUSEPORT and SO_REUSEADDR enabled
@@ -71,11 +96,22 @@ pub fn create_tcp_listener(
         socket.set_reuse_port(true)?;
     }
 
+    // Same best-effort tuning as UDP. On Linux an accepted stream
+    // inherits the listener's receive buffer, so this one call covers
+    // every connection the listener hands out.
+    let _ = socket.set_recv_buffer_size(INGEST_RCVBUF_BYTES);
+
     socket.set_nonblocking(true)?;
     socket.bind(&addr.into())?;
     socket.listen(backlog)?;
     let std_listener: std::net::TcpListener = socket.into();
     TcpListener::from_std(std_listener)
+}
+
+/// Effective SO_RCVBUF of a bound TCP listener, as reported by the kernel.
+/// Accepted streams inherit this buffer on Linux.
+pub fn tcp_listener_rcvbuf(listener: &TcpListener) -> io::Result<usize> {
+    socket2::SockRef::from(listener).recv_buffer_size()
 }
 
 /// High-throughput UDP Syslog listener
@@ -277,6 +313,38 @@ mod tests {
         let target_addr: SocketAddr = format!("127.0.0.1:{}", local_port).parse().unwrap();
         let socket2 = create_udp_socket(target_addr, true);
         assert!(socket2.is_ok(), "SO_REUSEPORT binding should succeed");
+    }
+
+    #[tokio::test]
+    async fn test_ingest_sockets_request_tuned_rcvbuf() {
+        // create_*_socket must apply INGEST_RCVBUF_BYTES. The kernel
+        // reports double the allocation for bookkeeping and may clamp to
+        // rmem_max, so instead of asserting an absolute number, compare
+        // against a probe socket given the identical request on the same
+        // machine: same request, same clamp, same readback.
+        let probe = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP)).unwrap();
+        let stock = probe.recv_buffer_size().unwrap();
+        probe.set_recv_buffer_size(INGEST_RCVBUF_BYTES).unwrap();
+        let expected = probe.recv_buffer_size().unwrap();
+        assert!(
+            expected >= stock,
+            "probe sanity: requesting {INGEST_RCVBUF_BYTES} must not shrink the buffer"
+        );
+
+        let addr: SocketAddr = "127.0.0.1:0".parse().unwrap();
+        let tuned = create_udp_socket(addr, false).unwrap();
+        let got = udp_socket_rcvbuf(&tuned).unwrap();
+        assert_eq!(
+            got, expected,
+            "create_udp_socket must request INGEST_RCVBUF_BYTES ({INGEST_RCVBUF_BYTES})"
+        );
+
+        let listener = create_tcp_listener(addr, false, 16).unwrap();
+        let tcp_got = tcp_listener_rcvbuf(&listener).unwrap();
+        assert!(
+            tcp_got >= stock,
+            "tuned TCP rcvbuf ({tcp_got}) must be >= stock default ({stock})"
+        );
     }
 
     #[tokio::test]
