@@ -26,10 +26,10 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -A clippy::too_many_arguments -A clippy::field_reassign_with_default -D warnings
       - name: Format
         run: cargo fmt --all -- --check
-      # NOTE: the known load-flaky micro-benchmark
-      # (test_classification_sub_microsecond_benchmark, see AGENTS.md
-      # Gotchas) is skipped here — it asserts sub-2µs timing in a debug
-      # build and flakes on busy shared runners. The local gate still runs
-      # it (re-run on flake); CI must not send mail for it.
+      # NOTE: test_classification_sub_microsecond_benchmark (issue #58) is
+      # deterministic since the warmup + median-of-rounds + release-gated
+      # rewrite — it runs in CI like every other test, no --skip. The strict
+      # < 2 µs gate applies to release builds; debug asserts a loose smoke
+      # bound (see the test's doc comment and AGENTS.md Gotchas).
       - name: Tests
-        run: cargo test --workspace -- --skip test_classification_sub_microsecond_benchmark
+        run: cargo test --workspace
