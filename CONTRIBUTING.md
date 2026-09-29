@@ -29,7 +29,7 @@ Run everything from the repo root: CLI defaults assume `data/raw`, `data/parquet
 
 ## Branches
 
-- Short-lived `feat/<topic>` or `fix/<topic>` branches, PR to `main`. No direct pushes to `main`.
+- Short-lived `feat/<topic>` or `fix/<topic>` branches, PR to `master`. No direct pushes to `master`.
 - One owner per area (see open issues by `area/*` label). Don't touch another owner's hot path without asking.
 - PRs need: green CI, `cargo fmt` clean, tests for new behavior (RED → GREEN → REFACTOR).
 

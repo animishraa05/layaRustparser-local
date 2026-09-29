@@ -63,7 +63,7 @@ Latency/throughput rows are only comparable when measured the same way: idle mac
 | Action Inviolability | N/A | **100% preserved** | anchor tokens held under fuzz |
 | GT fields wrong | 1,512 | **1,512 (identical)** | fuzzer-caused; engine delta = 0 |
 
-## 4.4 Frozen holdout (unseen vendors, executed once at P8) · [`eval_holdout_report.md`](../benchmarks/eval_holdout_report.md)
+## 4.4 Frozen holdout (unseen vendors, executed once at evaluation cutoff) · [`eval_holdout_report.md`](../benchmarks/eval_holdout_report.md)
 
 | Metric | Baseline | 3-Tier |
 | :--- | ---: | ---: |
@@ -71,7 +71,7 @@ Latency/throughput rows are only comparable when measured the same way: idle mac
 | GT fields correct | 0 | **320** |
 | GT fields wrong | 720 | **400** (−44%) |
 | TA | 100.00% | **100.00%** |
-| Field F1 † | 64.00% | **80.00%** |
+| Mean Field Accuracy † | 64.00% | **80.00%** |
 
 > The holdout is **frozen**: never regenerated, never re-run post-freeze. Its report timestamp (`2026-09-24T09:41:32Z`) is the audit trail.
 
@@ -119,6 +119,6 @@ $ echo $?
 2
 ```
 
-Machine-readable exit codes (**P10.0**): **`0` = valid · `1` = missing input / IO error · `2` = tamper detected**. (`block_00000.parquet` is *deliberately* tampered in-repo so the failure path is demonstrable out of the box; `block_00001.parquet` is the valid control.)
+Machine-readable exit codes: **`0` = valid · `1` = missing input / IO error · `2` = tamper detected**. (`block_00000.parquet` is *deliberately* tampered in-repo so the failure path is demonstrable out of the box; `block_00001.parquet` is the valid control.)
 
-The live ingest chain at full scale wrote **186 Parquet blocks with 186/186 verifying PASS** ([`FULL_DATASET_RESULTS.md`](../FULL_DATASET_RESULTS.md) §4) — SIGTERM flushes the in-flight batch, closing the tail-loss window found during P9.
+The live ingest chain at full scale wrote **186 Parquet blocks with 186/186 verifying PASS** ([`FULL_DATASET_RESULTS.md`](../FULL_DATASET_RESULTS.md) §4) — SIGTERM flushes the in-flight batch, closing the tail-loss window found during the live-ingest hardening pass.

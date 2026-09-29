@@ -32,10 +32,10 @@ Transcribed from the `VendorFormat` enum and prefix table in [`crates/ulpf-core/
 | EVE JSON — **Suricata** | `{"timestamp":` · `"event_type":` · `"flow":` · `"alert":` | `suricata.rs` | supported |
 | filterlog — **pfSense** | `filterlog[` · `filterlog:` | `pfsense.rs` | supported |
 | **CEF** envelope (vendor-neutral) | `CEF:` | `cef.rs` | supported |
-| LEEF · generic `key=value` · flat JSON · XML · RFC 5424 (structured data) | — | — | planned, P10.1 (README roadmap) |
+| LEEF · generic `key=value` · flat JSON · XML · RFC 5424 (structured data) | — | — | planned (README roadmap) |
 | anything else | — | generic fallback event — vendor `Unknown`, **never silently dropped** | by design |
 
-About 10 more vendors (ISRO-relevant) are planned for P10.2 (README roadmap). You do not have to wait for that code: `ulpf onboard` synthesises and validates a parser from 3–5 sample lines, fully offline (README quick start, step 7).
+About 10 more vendors (ISRO-relevant) are planned (README roadmap). You do not have to wait for that code: `ulpf onboard` synthesises and validates a parser from 3–5 sample lines, fully offline (README quick start, step 7).
 
 ## One real line, end to end
 

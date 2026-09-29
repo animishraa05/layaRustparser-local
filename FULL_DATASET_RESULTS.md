@@ -1,6 +1,6 @@
 # ULPF Full-Dataset End-to-End Results
 
-**Date:** 2026-09-24 · **Track:** parser-lab (3-Tier Pipeline overhaul, plan P1–P8 complete)
+**Date:** 2026-09-24 · **Track:** parser-lab, 3-Tier Pipeline
 **Scope:** generate a full dataset of proper (clean, unmutated) logs, run the *entire*
 system against it — classification → parsing → clustering → evaluation → live
 ingest → Merkle/Parquet integrity → tamper detection → air-gapped onboarding —
@@ -54,7 +54,7 @@ python3 scripts/gen_adversarial.py --full 25000  # seed 777, distinct from 1337/
 | VCA | 100.00% | 100.00% | parity |
 | GA (grouping) | 100.00% | 100.00% | ≥ baseline |
 | TA (template) | 100.00% | 100.00% | ceiling both |
-| Macro F1 (src/dst/port/proto) | 100.00% | 100.00% | exact |
+| Mean Field Accuracy (src/dst/port/proto) | 100.00% | 100.00% | exact |
 | Disposition | 100.00% | 100.00% | exact |
 | Action Inviolability | N/A | **100% preserved** | invariant held |
 | Lossless SHA-256 | 224657/224657 | 224657/224657 | byte-exact |

@@ -6,7 +6,7 @@
 > future work: **no tuning against the corpus that exposed the gap**
 > (fresh validation data only).
 
-## 1. Vendor expansion — P10.2 (highest return)
+## 1. Vendor expansion (highest return)
 
 **Gap:** holdout disposition 0/0 — no extractor means `Unknown` fields and
 disposition on every line of an unseen vendor (baseline VCA 0%, tiered 40%

@@ -40,7 +40,7 @@ All figures measured on the same machine (Linux x86_64, rustc 1.96.0), release b
 | **Holdout** (frozen, one-shot) | 200 | 40 ² / 100 / **100** / 80 / 0 ² % | 74.47 → **5.63 µs** (−92.4%) | 1,721,640 → 154,514 EPS (0.09×) ³ | — |
 
 ¹ All 382 are **ground-truth-side mutation damage** — the fuzzer intentionally rewrote IP/port bytes; both engines produce *identical* mismatch counts (1,512 wrong fields each), so the delta is zero. Details: [`eval_adversarial_report.md`](docs/benchmarks/eval_adversarial_report.md) §1b.
-² Holdout vendors are intentionally unseen; the baseline recognises **0** — tiered recognises **40%** on structure alone and scores **320 GT fields correct vs baseline's 0**. Disposition is **0% on both engines by construction of the experiment**: the holdout's vendors have no extractor, so every event resolves to `Unknown` disposition (160/200 lines *do* carry labels — 102 Allowed / 58 Blocked — and both engines fail them all). Known gap, tracked as P10.2 vendor expansion. Details: [`eval_holdout_report.md`](docs/benchmarks/eval_holdout_report.md) §1b–§3.
+² Holdout vendors are intentionally unseen; the baseline recognises **0** — tiered recognises **40%** on structure alone and scores **320 GT fields correct vs baseline's 0**. Disposition is **0% on both engines by construction of the experiment**: the holdout's vendors have no extractor, so every event resolves to `Unknown` disposition (160/200 lines *do* carry labels — 102 Allowed / 58 Blocked — and both engines fail them all). Known gap; vendor expansion is the fix. Details: [`eval_holdout_report.md`](docs/benchmarks/eval_holdout_report.md) §1b–§3.
 ³ Holdout is a small (200-line) one-shot frozen audit — its throughput ratio is not a performance signal; latency percentiles there are (p50 −92.4%).
 
 **Invariants held on every corpus, both engines:**
@@ -51,7 +51,7 @@ All figures measured on the same machine (Linux x86_64, rustc 1.96.0), release b
 | **Lossless provenance** (`raw_hash == SHA-256(raw_log)`, byte-exact) | **100.00%** |
 | **No panics** (`catch_unwind` around every parse) | **0 aborts / N lines** |
 | **Sidecar ground truth, full scale** (5 field keys × 224,657 lines) | **1,000,000 correct · 0 wrong · 123,285 honest null** |
-| **Live Merkle chain at scale** (P9 ingest run) | **186 / 186 blocks verify PASS** |
+| **Live Merkle chain at scale** (live ingest run) | **186 / 186 blocks verify PASS** |
 
 ## Why ULPF
 
@@ -78,7 +78,7 @@ git clone git@github.com:guptchar/layaRustparser.git && cd layaRustparser
 cargo build --release
 
 # Accuracy scorecards — regenerates the non-frozen committed reports in ~90s
-# (the holdout report is frozen at P8 and deliberately not re-runnable)
+# (the holdout report is frozen at the evaluation cutoff and deliberately not re-runnable)
 ./target/release/ulpf evaluate --engine all --duration 3 --threads 16 --samples 10000 --out docs/benchmarks/eval_hardcore_report.md --corpus core --data-dir data/raw
 ./target/release/ulpf evaluate --engine all --duration 3 --threads 16 --samples 10000 --out docs/benchmarks/eval_adversarial_report.md --corpus adversarial --data-dir data/raw --audit-dump audit_adv_dump.jsonl
 
@@ -104,7 +104,7 @@ cargo fmt --all -- --check
 cargo test --workspace --no-fail-fast
 ```
 
-**Latest local run (2026-09-29): clippy 0 warnings · fmt clean · `253 passed · 1 failed · 1 ignored`.** The 1 failure is the known load-flaky micro-benchmark below (passes on idle re-run; CI skips it) — not a regression. Coverage: parser field accuracy + byte-exact SHA-256 per vendor, Drain anchor-token inviolability, the vanilla-vs-3-tier duel, tier behaviour, Merkle/tamper/exit-code contracts, CLI smoke tests, evaluator GT grading, air-gapped onboarder. The single `ignored` test is the frozen holdout (`test_holdout_novelty_end_to_end_at_freeze` in `crates/ulpf-ai/tests/ai_tests.rs`, `#[ignore = "holdout frozen until the P8 final freeze"]`) — run once at freeze via `cargo test -p ulpf-ai -- --ignored test_holdout`. The load-sensitive micro-benchmark (`test_classification_sub_microsecond_benchmark`, asserts < 2 µs/classification in a debug build) is **CI-skipped, not ignored** (`--skip` in `ci.yml`) and flakes on busy machines — re-run before assuming breakage ([`AGENTS.md`](AGENTS.md) Gotchas). For a fresh count: `cargo test --workspace --no-fail-fast`.
+**Latest local run (2026-09-29): clippy 0 warnings · fmt clean · `253 passed · 1 failed · 1 ignored`.** The 1 failure is the known load-flaky micro-benchmark below (passes on idle re-run; CI skips it) — not a regression. Coverage: parser field accuracy + byte-exact SHA-256 per vendor, Drain anchor-token inviolability, the vanilla-vs-3-tier duel, tier behaviour, Merkle/tamper/exit-code contracts, CLI smoke tests, evaluator GT grading, air-gapped onboarder. The single `ignored` test is the frozen holdout (`test_holdout_novelty_end_to_end_at_freeze` in `crates/ulpf-ai/tests/ai_tests.rs`, ignored at the evaluation freeze) — run once at freeze via `cargo test -p ulpf-ai -- --ignored test_holdout`. The load-sensitive micro-benchmark (`test_classification_sub_microsecond_benchmark`, asserts < 2 µs/classification in a debug build) is **CI-skipped, not ignored** (`--skip` in `ci.yml`) and flakes on busy machines — re-run before assuming breakage ([`AGENTS.md`](AGENTS.md) Gotchas). For a fresh count: `cargo test --workspace --no-fail-fast`.
 
 ## SIH26156 requirements matrix
 
@@ -209,7 +209,7 @@ Known gaps, each one measured:
 
 - **Adversarial GA: 98.41% vs baseline 100%** (−1.59 pt) — deny-class template variants cluster together on the fuzz corpus; Action Inviolability itself stays 100% (no ALLOW/DENY ever merges). Fix tracked as a stretch item (deny-class sub-clustering).
 - **Corpus-wide mixed-action clusters on fuzzed lines (duel finding).** On R2, 10 of 81 clusters (vanilla: 17 of 53) still hold both dispositions: relay/CR-prefixed records keep a space, the tokenizer fuses the CSV/JSON into one token, and the buried action word never reaches the anchor vocabulary. The 100% inviolability gate is the bare-token canary; root cause and scope are disclosed in [`eval_duel_report.md`](docs/benchmarks/eval_duel_report.md) — deliberately **not tuned away** on the corpus that exposed it (a fix must be validated on unseen data).
-- **Holdout disposition = 0/0** — the frozen holdout's vendors are *unseen* (no extractor exists for them), so both engines emit `Unknown` disposition on all 200 lines even though 160 carry ground-truth labels. It's an honest zero, not a skipped grade; vendor expansion (P10.2) is the fix.
+- **Holdout disposition = 0/0** — the frozen holdout's vendors are *unseen* (no extractor exists for them), so both engines emit `Unknown` disposition on all 200 lines even though 160 carry ground-truth labels. It's an honest zero, not a skipped grade; vendor expansion is the fix.
 - **Small-corpus throughput ratio ≈ 0.90–0.97×** — on 757–1,720 line corpora the tiered engine pays Drain bookkeeping that the pure baseline skips; at 224k lines throughput reaches parity (**1.01×**). The tiers' consistent win is **latency** (−92% to −96% p50 at every scale), not throughput.
 - **Throughput/latency are load-sensitive** — same-code reruns swing baseline p50 between ~73 µs (idle) and ~1,104 µs (busy). Accuracy is deterministic; timing is not. Reports embed timestamps for this reason. The 2026-09-28 re-measure caught this live: one adversarial run halved baseline throughput (428,899 vs ~830k EPS), and one full-scale run doubled baseline p50 (196.49 vs ~107 µs) — median-of-3 absorbs both, which is why the ritual requires it.
 - **Full-scale p50 (6.15 µs) is over the 5.0 µs latency gate.** The gate is calibrated on the core corpus, where p50 is 3.84 µs and passes. At 224,657 lines the working set no longer stays cache-resident (still −94.2% vs baseline). The gate stays where it is; the gap is tracked in the roadmap.
@@ -242,14 +242,13 @@ Full index: [`docs/README.md`](docs/README.md) (every doc, one row each). Short 
 | Repo config | CI and forms, each filed once in `docs/README.md`: [`.github/workflows/`](.github/workflows/) · [`.github/ISSUE_TEMPLATE/`](.github/ISSUE_TEMPLATE/) · [`pull_request_template.md`](.github/pull_request_template.md) · [`dependabot.yml`](.github/dependabot.yml) · [`.coderabbit.yaml`](.coderabbit.yaml) · [`docker-compose.yml`](docker-compose.yml) |
 | Frontend notes | Dashboard-track docs, each filed once in `docs/README.md`: [`frontend/laya-frontend/README.md`](frontend/laya-frontend/README.md) and sibling notes |
 | [`docs/diagrams/`](docs/diagrams/) | Graphviz `.dot` sources + rendered `.png` (regenerate with `dot -Tpng -Gdpi=144`) |
-| [`remainingStuff.md`](remainingStuff.md) | Retired pointer — open work lives in GitHub issues |
 | [`scripts/run_demo.sh`](scripts/run_demo.sh) | One-command non-destructive demo |
 
 ## Project status & roadmap
 
-**Done (P1 → P10.0):** measurement-first ruler fixes → vendor extractors → CEF → parse-order/LRU tiers → audit null-correct rules → dynamic message-code anchors → GA/TA to 100 both engines → deterministic adversarial + frozen holdout corpora → sidecar ground truth → full-scale 224,657-line validation → 186-block live chain → CLI hardening → ASA verdict-phrase union → fresh re-run evidence → vanilla-vs-3-tier duel surfaced in `ulpf scorecard`.
+**Done:** measurement-first ruler fixes → vendor extractors → CEF → parse-order/LRU tiers → audit null-correct rules → dynamic message-code anchors → GA/TA to 100 both engines → deterministic adversarial + frozen holdout corpora → sidecar ground truth → full-scale 224,657-line validation → 186-block live chain → CLI hardening → ASA verdict-phrase union → fresh re-run evidence → vanilla-vs-3-tier duel surfaced in `ulpf scorecard`.
 
-**In progress (P10):** universal wire formats (LEEF, generic KV/JSON/XML, RFC5424 SD) · vendor expansion (~10, ISRO-relevant) · multi-source measurement + Mapping-Coverage metric · container < 35 MB (P10.7) · submission artifacts (readme/pitch/video) · deny-class GA stretch (P10.9, droppable).
+**In progress:** universal wire formats (LEEF, generic KV/JSON/XML, RFC5424 SD) · vendor expansion (~10, ISRO-relevant) · multi-source measurement + Mapping-Coverage metric · container < 35 MB (planned) · submission artifacts (readme/pitch/video) · deny-class GA stretch (droppable).
 
 **Performance gates** (checked whenever hot path/miner changes): p50 < 5.0 µs *(core-corpus: 3.84 µs passes; full-scale 6.15 µs is over the line, tracked above)* · LRU hit rate > 90% · Action Inviolability 100% · grouping accuracy > 90%.
 

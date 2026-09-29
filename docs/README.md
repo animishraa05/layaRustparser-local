@@ -21,7 +21,7 @@ Benchmarks (`benchmarks/` — committed, regenerable with `ulpf evaluate`):
 | [`benchmarks/eval_hardcore_report.md`](benchmarks/eval_hardcore_report.md) | Core-corpus scorecard both engines (1,720 lines). The regression baseline. |
 | [`benchmarks/eval_full_report.md`](benchmarks/eval_full_report.md) | Full-scale scorecard (224,657 lines / 183 MB). |
 | [`benchmarks/eval_adversarial_report.md`](benchmarks/eval_adversarial_report.md) | Deterministic fuzz scorecard (757 mutated lines). |
-| [`benchmarks/eval_holdout_report.md`](benchmarks/eval_holdout_report.md) | Frozen holdout scorecard, run once at P8 (unseen vendors). |
+| [`benchmarks/eval_holdout_report.md`](benchmarks/eval_holdout_report.md) | Frozen holdout scorecard, run once at evaluation cutoff (unseen vendors). |
 | [`benchmarks/eval_duel_report.md`](benchmarks/eval_duel_report.md) | Vanilla-vs-3-tier duel over probe, fuzz, BGL, Thunderbird rounds. |
 
 Submission exports (`releases/` — frozen PDFs, print from the template named in each comment):
