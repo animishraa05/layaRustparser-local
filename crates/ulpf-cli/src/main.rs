@@ -11,6 +11,7 @@ use anyhow::{Context, Result};
 use bytes::Bytes;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use crossbeam_channel::{bounded, RecvTimeoutError, TrySendError};
+use serde::Serialize;
 use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
 
@@ -24,11 +25,10 @@ use ulpf_core::ingest::socket::{
 };
 use ulpf_core::ingest::{BackpressurePolicy, LogQueue, MemoryQueue};
 
-use ulpf_core::parser::UniversalParser;
 use ulpf_core::schema::ocsf::NetworkActivity;
 use ulpf_integrity::batcher::{BatchAccumulator, BatcherConfig, IncomingLog};
 use ulpf_integrity::storage::ParquetCompression;
-use ulpf_integrity::tamper::verify_block_with_ledger;
+use ulpf_integrity::tamper::{verify_block_with_ledger, TamperReport, TamperedRecord};
 
 use ulpf_cli::{scorecard, serve};
 
@@ -143,7 +143,9 @@ enum Commands {
     Verify(VerifyArgs),
     /// 1-Click air-gapped onboarding: synthesize and validate a regex parser from sample raw log lines
     Onboard(OnboardArgs),
-    /// Execute multi-core parsing and normalization throughput benchmarks
+    /// Deprecated shim: `benchmark` was removed (it duplicated `evaluate`).
+    /// Still parses old flags so existing scripts reach the pointer below
+    /// instead of a bare clap error; always exits 1.
     Benchmark(BenchmarkArgs),
     /// Architectural Evaluator: benchmark Baseline vs 3-Tier (LRU+DrainDotNet+Laya) with latency percentiles and cache efficiency
     Evaluate(EvaluateArgs),
@@ -200,6 +202,13 @@ struct InspectArgs {
     /// Number of records to display
     #[arg(short, long, default_value_t = 1)]
     count: usize,
+
+    /// Optional path to write the inspected records as machine-readable JSON
+    /// (same shape as `GET /blocks/:id/records`: event_id, raw_log,
+    /// raw_hash, ocsf — what the #14 investigation page renders).
+    /// Human stdout is byte-identical whether or not it is passed.
+    #[arg(long)]
+    json_out: Option<PathBuf>,
 }
 
 /// Default parse worker count: one thread per core. Parse is synchronous CPU
@@ -283,6 +292,16 @@ struct VerifyArgs {
     /// adjacent pair of anchored blocks must extend the same append-only log
     #[arg(long, default_value_t = false)]
     consistency: bool,
+
+    /// Optional path to write a machine-readable verification report
+    /// (block id, leaf count, anchored vs recomputed roots, verdict,
+    /// per-record failures — what the #15 integrity page and CI gates
+    /// consume without scraping stdout). Written whenever a report is
+    /// produced (exit 0 valid / exit 2 tampered); usage errors (exit 1)
+    /// and `--consistency` mode write nothing. Human stdout is
+    /// byte-identical whether or not it is passed.
+    #[arg(long)]
+    json_out: Option<PathBuf>,
 }
 
 #[derive(Args, Debug)]
@@ -1054,6 +1073,15 @@ fn run_verify(args: VerifyArgs) -> Result<()> {
             );
             std::process::exit(1);
         }
+        if args.json_out.is_some() {
+            // The cumulative-chain report has no single block id / root pair,
+            // so there is no JSON shape to write yet — fail loudly rather
+            // than silently dropping the flag.
+            eprintln!(
+                "[ERROR] --json-out is only supported for single-block verify (no --consistency)."
+            );
+            std::process::exit(1);
+        }
         return run_consistency(&args.ledger);
     }
     let Some(file) = args.file else {
@@ -1063,7 +1091,7 @@ fn run_verify(args: VerifyArgs) -> Result<()> {
         eprintln!("[ERROR] --file is required unless --consistency is passed.");
         std::process::exit(1);
     };
-    run_verify_file(&file, &args.ledger)
+    run_verify_file(&file, &args.ledger, args.json_out.as_ref())
 }
 
 /// Cumulative-chain audit: every adjacent pair of anchored blocks must
@@ -1192,7 +1220,39 @@ fn run_prove(args: ProveArgs) -> Result<()> {
     Ok(())
 }
 
-fn run_verify_file(file: &PathBuf, ledger: &PathBuf) -> Result<()> {
+/// Machine-readable twin of the `verify` human verdict (`--json-out`, #57).
+///
+/// The exact shape automation consumes (CI gates, the #44 SIEM forwarder,
+/// the #15 integrity page) without scraping stdout: block id, leaf count,
+/// the anchored vs recomputed roots, a `pass`/`fail` verdict mirroring the
+/// exit code (0/2), and the per-record failure list. Documented in
+/// `docs/CONTRACTS.md` §5 with fixtures under `data/fixtures/api/`.
+#[derive(Debug, Serialize)]
+struct VerifyJsonReport {
+    block_id: u64,
+    leaf_count: usize,
+    expected_records: usize,
+    ledger_merkle_root: String,
+    computed_merkle_root: String,
+    verdict: &'static str,
+    failures: Vec<TamperedRecord>,
+}
+
+impl VerifyJsonReport {
+    fn from_report(report: &TamperReport) -> Self {
+        Self {
+            block_id: report.block_id,
+            leaf_count: report.actual_records,
+            expected_records: report.expected_records,
+            ledger_merkle_root: report.ledger_merkle_root.clone(),
+            computed_merkle_root: report.computed_merkle_root.clone(),
+            verdict: if report.is_valid { "pass" } else { "fail" },
+            failures: report.tampered_records.clone(),
+        }
+    }
+}
+
+fn run_verify_file(file: &PathBuf, ledger: &PathBuf, json_out: Option<&PathBuf>) -> Result<()> {
     println!(
         "\x1b[1;36m====================================================================\x1b[0m"
     );
@@ -1235,6 +1295,15 @@ fn run_verify_file(file: &PathBuf, ledger: &PathBuf) -> Result<()> {
             std::process::exit(2);
         }
     };
+
+    // Machine-readable twin of the human verdict below. Written BEFORE the
+    // banner so a JSON-write IO failure surfaces as exit 1 instead of
+    // printing PASS and then failing; stdout is untouched either way.
+    if let Some(json_path) = json_out {
+        let payload = VerifyJsonReport::from_report(&report);
+        let json_data = serde_json::to_string_pretty(&payload)?;
+        fs::write(json_path, json_data)?;
+    }
 
     println!("\n  Block Identifier       : #{}", report.block_id);
     println!("  Total Log Records      : {}", report.actual_records);
@@ -1416,151 +1485,20 @@ fn run_onboard(args: OnboardArgs) -> Result<()> {
 }
 
 // -----------------------------------------------------------------------------
-// 4. MULTI-CORE BENCHMARKING
+// 4. DEPRECATED BENCHMARK SHIM (#57)
 // -----------------------------------------------------------------------------
+// `benchmark` duplicated `evaluate` (`--compare` just forwarded to it), so
+// the scorecard code path now lives only in `run_evaluate`. This shim keeps
+// the subcommand name parsing — old flags still parse so existing scripts
+// reach the pointer instead of a bare clap error — and exits 1 (usage
+// error, matching the codebase's 0 valid / 1 usage-IO / 2 tamper-verdict
+// contract; 2 stays reserved for forensic verdicts).
 
-async fn run_benchmark(args: BenchmarkArgs) -> Result<()> {
-    if args.compare {
-        let eval_args = EvaluateArgs {
-            data_dir: args.data_dir,
-            engine: "all".into(),
-            corpus: CorpusKind::Core,
-            duration: args.duration,
-            threads: args.threads,
-            samples: 10000,
-            out: PathBuf::from("eval_hardcore_report.md"),
-            json_out: None,
-            audit_dump: None,
-        };
-        return run_evaluate(eval_args).await;
-    }
-
-    println!(
-        "\x1b[1;36m====================================================================\x1b[0m"
+async fn run_benchmark(_args: BenchmarkArgs) -> Result<()> {
+    eprintln!(
+        "[DEPRECATED] 'ulpf benchmark' has been removed (it duplicated 'ulpf evaluate'); use `ulpf evaluate` instead, e.g.: ulpf evaluate --engine all --duration 3 --threads 16 --samples 10000 --out eval_report.md"
     );
-    println!(
-        "\x1b[1;32m               ULPF Multi-Core Throughput Benchmark                \x1b[0m"
-    );
-    println!(
-        "\x1b[1;36m====================================================================\x1b[0m"
-    );
-    println!("  Dataset Directory : {}", args.data_dir.display());
-    println!("  Benchmark Duration: {} seconds", args.duration);
-    println!("  Parallel Workers  : {}", args.threads);
-    println!(
-        "\x1b[1;36m--------------------------------------------------------------------\x1b[0m"
-    );
-
-    let mut corpus: Vec<String> = Vec::new();
-    let files = vec![
-        "cisco_asa.log",
-        "fortigate.log",
-        "paloalto.log",
-        "suricata.json",
-        "pfsense.log",
-    ];
-
-    for file_name in files {
-        let p = args.data_dir.join(file_name);
-        if p.exists() {
-            let f = File::open(&p)?;
-            let reader = BufReader::new(f);
-            for l in reader.lines().map_while(Result::ok) {
-                let trimmed = l.trim().to_string();
-                if !trimmed.is_empty() {
-                    corpus.push(trimmed);
-                }
-            }
-        }
-    }
-
-    if corpus.is_empty() {
-        println!(
-            "\x1b[1;31m[ERROR] No logs found in {}. Run harvest first!\x1b[0m",
-            args.data_dir.display()
-        );
-        std::process::exit(1);
-    }
-
-    println!(
-        "[+] Loaded {} diverse raw perimeter log lines into RAM.",
-        corpus.len()
-    );
-    println!(
-        "[*] Starting {} worker tasks across CPU cores for {} seconds...",
-        args.threads, args.duration
-    );
-
-    let corpus_arc = Arc::new(corpus);
-    let stop_signal = Arc::new(AtomicBool::new(false));
-    let total_events = Arc::new(AtomicU64::new(0));
-
-    let mut thread_handles = Vec::new();
-    let start_time = Instant::now();
-    let duration = Duration::from_secs(args.duration);
-
-    for worker_id in 0..args.threads {
-        let corpus_ref = corpus_arc.clone();
-        let stop_ref = stop_signal.clone();
-        let count_ref = total_events.clone();
-
-        thread_handles.push(std::thread::spawn(move || {
-            let parser = UniversalParser::new();
-            let mut idx = worker_id;
-            let len = corpus_ref.len();
-            let mut local_count = 0u64;
-
-            while !stop_ref.load(Ordering::Relaxed) {
-                let raw = &corpus_ref[idx % len];
-                let _ocsf = parser.parse_lossless(raw);
-                local_count += 1;
-                idx += 1;
-
-                if local_count.is_multiple_of(1024) {
-                    count_ref.fetch_add(1024, Ordering::Relaxed);
-                }
-            }
-
-            let remainder = local_count % 1024;
-            if remainder > 0 {
-                count_ref.fetch_add(remainder, Ordering::Relaxed);
-            }
-        }));
-    }
-
-    std::thread::sleep(duration);
-    stop_signal.store(true, Ordering::Relaxed);
-
-    for h in thread_handles {
-        let _ = h.join();
-    }
-
-    let elapsed = start_time.elapsed().as_secs_f64();
-    let total = total_events.load(Ordering::Relaxed);
-    let eps = total as f64 / elapsed;
-
-    println!(
-        "\n\x1b[1;32m========================= BENCHMARK RESULTS =========================\x1b[0m"
-    );
-    println!("  Total Events Normalized : \x1b[1;37m{}\x1b[0m", total);
-    println!(
-        "  Elapsed Duration        : \x1b[1;37m{:.2}s\x1b[0m",
-        elapsed
-    );
-    println!(
-        "  Aggregate Throughput    : \x1b[1;32m{:>10.0} Events / Second (EPS)\x1b[0m",
-        eps
-    );
-    println!(
-        "  Per-Core Throughput     : \x1b[1;33m{:>10.0} EPS / thread\x1b[0m",
-        eps / args.threads as f64
-    );
-    println!("  End-to-End Latency      : \x1b[1;36m< 1.8 microseconds / event\x1b[0m");
-    println!(
-        "\x1b[1;32m====================================================================\x1b[0m"
-    );
-
-    Ok(())
+    std::process::exit(1);
 }
 
 // -----------------------------------------------------------------------------
@@ -1839,6 +1777,45 @@ fn run_inspect(args: InspectArgs) -> Result<()> {
 
     let records = ulpf_integrity::storage::read_parquet_file(&args.file)?;
     println!("  Block Record Count: {}", records.len());
+
+    // Machine-readable twin of the records below (#57): the exact shape the
+    // #14 investigation page renders (event_id, raw_log, raw_hash, ocsf),
+    // serialized as the serve plane's `GET /blocks/:id/records` response so
+    // CLI exports and HTTP responses never drift apart. Stdout untouched.
+    if let Some(json_path) = &args.json_out {
+        use ulpf_cli::serve::handlers::{BlockRecordsResponse, StoredRecordItem};
+        use ulpf_integrity::tamper::block_id_for_parquet;
+        let block_id = block_id_for_parquet(&args.file, records.first().map(|r| r.block_id));
+        let items: Vec<StoredRecordItem> = records
+            .iter()
+            .take(args.count)
+            .map(|r| {
+                let ocsf = serde_json::from_str::<serde_json::Value>(&r.ocsf_json)
+                    .unwrap_or_else(|_| serde_json::json!({ "raw": r.raw_log }));
+                StoredRecordItem {
+                    event_id: r.event_id.clone(),
+                    block_id: r.block_id,
+                    leaf_index: r.leaf_index,
+                    timestamp: r.timestamp,
+                    vendor: r.vendor.clone(),
+                    raw_log: r.raw_log.clone(),
+                    raw_hash: r.raw_hash.clone(),
+                    ocsf,
+                }
+            })
+            .collect();
+        let total = records.len();
+        let payload = BlockRecordsResponse {
+            block_id,
+            total_records_in_block: total,
+            filtered_records_count: total,
+            offset: 0,
+            limit: args.count,
+            records: items,
+        };
+        let json_data = serde_json::to_string_pretty(&payload)?;
+        fs::write(json_path, json_data)?;
+    }
 
     for (i, rec) in records.iter().take(args.count).enumerate() {
         println!("\n\x1b[1;37mForensic Record #{}:\x1b[0m", i);
