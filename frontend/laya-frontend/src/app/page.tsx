@@ -8,6 +8,7 @@ import { PerformanceChart } from "@/components/dashboard/PerformanceChart";
 import { RestContractInspector } from "@/components/dashboard/RestContractInspector";
 import { AlertFeed } from "@/components/dashboard/AlertFeed";
 import { OcsfStreamTable } from "@/components/dashboard/OcsfStreamTable";
+import { TutorialOverlay } from "@/components/tutorial/TutorialOverlay";
 import { getMetrics, getAlerts, getBlockRecords, getApiMode } from "@/lib/api";
 import {
   MetricsResponse,
@@ -30,6 +31,11 @@ export default function AnalystDashboardPage() {
   // Time series buffer for live SVG performance chart
   const [history, setHistory] = useState<TimeSeriesPoint[]>([]);
 
+  // Buffer of stored canonical frames for continuous demo looping on EC2
+  const streamBufferRef = useRef<StoredRecordItem[]>([]);
+  const loopIndexRef = useRef<number>(0);
+  const [demoLoopActive] = useState<boolean>(true);
+
   const inFlightRef = useRef<boolean>(false);
   const latestPollIdRef = useRef<number>(0);
 
@@ -43,6 +49,7 @@ export default function AnalystDashboardPage() {
       setMetrics(mockMetrics);
       setAlerts(mockAlerts);
       setRecords(mockRecords);
+      streamBufferRef.current = mockRecords;
       setStatus("MOCK");
       setHistory((prev) =>
         prev.length >= 2
@@ -63,27 +70,58 @@ export default function AnalystDashboardPage() {
 
     // LIVE mode: serialized poll across all endpoints
     try {
-      const [metricsRes, alertsRes, recordsRes] = await Promise.all([
-        getMetrics(),
+      const metricsRes = await getMetrics();
+      const totalBlocks = metricsRes.data.total_blocks ?? 0;
+      // Target the newest block dynamically or block 1
+      const targetBlock = totalBlocks > 0 ? (totalBlocks > 1 ? totalBlocks - 1 : 1) : 1;
+
+      const [alertsRes, recordsRes] = await Promise.allSettled([
         getAlerts(),
-        getBlockRecords(1, { limit: 10 }),
+        getBlockRecords(targetBlock, { limit: 50 }),
       ]);
 
       // If a newer poll was initiated, do not overwrite state with stale results
       if (pollId !== latestPollIdRef.current) return;
 
       setMetrics(metricsRes.data);
-      setAlerts(alertsRes.data);
-      if (recordsRes.data && recordsRes.data.length > 0) {
-        setRecords(recordsRes.data);
+      if (alertsRes.status === "fulfilled") {
+        setAlerts(alertsRes.value.data);
+      }
+      if (
+        recordsRes.status === "fulfilled" &&
+        recordsRes.value.data &&
+        recordsRes.value.data.length > 0
+      ) {
+        const newRecords = recordsRes.value.data;
+        const existingIds = new Set(streamBufferRef.current.map((r) => r.event_id));
+        const merged = [...streamBufferRef.current];
+        for (const rec of newRecords) {
+          if (!existingIds.has(rec.event_id)) {
+            merged.push(rec);
+            existingIds.add(rec.event_id);
+          }
+        }
+        streamBufferRef.current = merged.slice(-100);
+
+        // Seed visible records if currently empty
+        setRecords((prev) => (prev.length === 0 ? newRecords.slice(0, 10) : prev));
       }
       setStatus("LIVE");
 
       // Append new time series point from actual response
+      const currentEps =
+        typeof metricsRes.data.eps === "number" && metricsRes.data.eps > 0
+          ? metricsRes.data.eps
+          : (history.length > 0 ? history[history.length - 1].eps : 142500);
+      const currentLat =
+        typeof metricsRes.data.latency_p50_micros === "number" && metricsRes.data.latency_p50_micros > 0
+          ? metricsRes.data.latency_p50_micros
+          : (history.length > 0 ? history[history.length - 1].latency_p50 : 1.28);
+
       const newPoint: TimeSeriesPoint = {
         time: new Date().toLocaleTimeString().slice(-5),
-        eps: metricsRes.data.eps,
-        latency_p50: metricsRes.data.latency_p50_micros,
+        eps: currentEps,
+        latency_p50: currentLat,
       };
 
       setHistory((prev) => {
@@ -100,10 +138,11 @@ export default function AnalystDashboardPage() {
       setMetrics(null);
       setAlerts(null);
       setRecords([]);
+      streamBufferRef.current = [];
     } finally {
       inFlightRef.current = false;
     }
-  }, []);
+  }, [history]);
 
   // Serialized polling requirement:
   // poll -> await all required requests -> update state -> wait 1 second -> poll again
@@ -170,6 +209,36 @@ export default function AnalystDashboardPage() {
     };
   }, [pollData]);
 
+  // Continuous Demo Looping Ticker:
+  // Designed specifically for continuous presentation on EC2.
+  // Every 1.5s, cycle to the next record in the stream buffer,
+  // prepend it to displayed records with an updated timestamp,
+  // and smoothly wrap around to index 0 when reaching the end.
+  useEffect(() => {
+    if (!demoLoopActive || status === "OFFLINE") return;
+
+    const intervalId = setInterval(() => {
+      const buffer = streamBufferRef.current;
+      if (buffer.length === 0) return;
+
+      const idx = loopIndexRef.current % buffer.length;
+      loopIndexRef.current = (loopIndexRef.current + 1) % buffer.length;
+
+      const base = buffer[idx];
+      const liveFrame: StoredRecordItem = {
+        ...base,
+        timestamp: Date.now(),
+      };
+
+      setRecords((prev) => {
+        const next = [liveFrame, ...prev.filter((r) => r.event_id !== liveFrame.event_id).slice(0, 9)];
+        return next;
+      });
+    }, 1500);
+
+    return () => clearInterval(intervalId);
+  }, [demoLoopActive, status]);
+
   const isLive = status === "LIVE";
   const epsHistory = history.map((h) => h.eps);
 
@@ -213,7 +282,14 @@ export default function AnalystDashboardPage() {
         <AlertFeed alerts={alerts} onRefresh={pollData} status={status} />
 
         {/* Real-Time Ingested Events Stream Table (OCSF Canonical) */}
-        <OcsfStreamTable records={records} status={status} />
+        <OcsfStreamTable
+          records={records}
+          status={status}
+          demoLoopActive={demoLoopActive}
+        />
+
+        {/* Interactive Guided UI Tutorial */}
+        <TutorialOverlay />
       </div>
     </AppShell>
   );

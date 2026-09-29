@@ -11,7 +11,9 @@ import {
   Lock,
   Cpu,
   ShieldCheck,
+  Sparkles,
 } from "lucide-react";
+import { startTutorialTour } from "@/components/tutorial/TutorialOverlay";
 
 interface NavItem {
   name: string;
@@ -113,7 +115,7 @@ export function Sidebar() {
         </div>
 
         {/* Nav Links */}
-        <nav className="px-2 flex flex-col gap-1">
+        <nav data-tour="sidebar-nav" className="px-2 flex flex-col gap-1">
           {navItems.map((item) => {
             const Icon = item.icon;
             const isActive =
@@ -181,13 +183,20 @@ export function Sidebar() {
 
       {/* Footer Info */}
       <div className="p-3 border-t border-[#CBD5E1] flex flex-col gap-2 bg-[#D8DCE2]">
+        <button
+          onClick={startTutorialTour}
+          className="flex items-center justify-center gap-2 px-2.5 py-1.5 rounded bg-gradient-to-r from-[#0284C7] to-[#0284C7]/90 hover:from-[#0369A1] hover:to-[#0284C7] text-white text-[0.75rem] font-mono font-semibold shadow-sm transition-all cursor-pointer"
+        >
+          <Sparkles className="w-3.5 h-3.5 text-white animate-pulse" />
+          <span>Interactive Tutorial</span>
+        </button>
+
         <div className="flex items-center gap-2 px-2.5 py-1.5 rounded bg-white border border-[#CBD5E1] shadow-sm">
           <span className="w-2 h-2 rounded-full bg-[#10B981] ring-2 ring-emerald-500/30 animate-pulse"></span>
           <span className="text-[0.75rem] font-mono text-[#1E293B] font-medium truncate">
             ulpf-engine:stable
           </span>
         </div>
-
       </div>
     </aside>
   );

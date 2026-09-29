@@ -51,7 +51,12 @@ export class ApiError extends Error {
   }
 }
 
-const API_BASE = "http://127.0.0.1:8080";
+// In the browser, API calls use relative paths so Next.js proxies them directly to the backend.
+// In SSR, API calls connect directly to the internal backend URL.
+const API_BASE =
+  typeof window !== "undefined"
+    ? ""
+    : process.env.INTERNAL_BACKEND_URL || "http://127.0.0.1:8080";
 
 export type ApiMode = "LIVE" | "MOCK";
 export type BackendStatus = "LIVE" | "OFFLINE" | "MOCK";

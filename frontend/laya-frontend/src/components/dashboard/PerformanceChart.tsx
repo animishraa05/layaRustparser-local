@@ -41,15 +41,40 @@ export function PerformanceChart({
           { time: "0s", eps: 0, latency_p50: 0 },
         ];
 
-  // Scale calculations for EPS (range 120,000 - 160,000)
-  const minEps = 120000;
-  const maxEps = 160000;
-  const epsRange = maxEps - minEps;
+  // Dynamic scale calculations for EPS:
+  // Automatically adapts to steady demo rates (e.g. 100 - 1,000 EPS) or high-volume bursts (50k - 200k EPS)
+  const nonZeroEps = points
+    .map((p) => p.eps)
+    .filter((v) => typeof v === "number" && v > 0);
+  const peakEps = nonZeroEps.length > 0 ? Math.max(...nonZeroEps) : 142500;
+  const lowestEps = nonZeroEps.length > 0 ? Math.min(...nonZeroEps) : 120000;
 
-  // Scale calculations for Latency (range 0.5 - 2.5 µs)
-  const minLat = 0.5;
-  const maxLat = 2.5;
-  const latRange = maxLat - minLat;
+  let minEps: number;
+  let maxEps: number;
+
+  if (peakEps > 10000) {
+    // High-speed mode (e.g. 100k - 200k EPS)
+    minEps = Math.max(0, lowestEps * 0.85);
+    maxEps = Math.max(peakEps * 1.15, minEps + 10000);
+  } else if (peakEps > 0) {
+    // Steady demo rate mode (e.g. 100 - 1,000 EPS)
+    minEps = Math.max(0, lowestEps * 0.75);
+    maxEps = Math.max(peakEps * 1.3, minEps + 50);
+  } else {
+    minEps = 0;
+    maxEps = 1000;
+  }
+  const epsRange = Math.max(1, maxEps - minEps);
+
+  // Dynamic scale calculations for Latency (range ~0.2 - 10.0 µs)
+  const nonZeroLat = points
+    .map((p) => p.latency_p50)
+    .filter((v) => typeof v === "number" && v > 0);
+  const peakLat = nonZeroLat.length > 0 ? Math.max(...nonZeroLat) : 2.5;
+  const lowestLat = nonZeroLat.length > 0 ? Math.min(...nonZeroLat) : 0.5;
+  const minLat = Math.max(0.1, lowestLat * 0.8);
+  const maxLat = Math.max(minLat + 0.5, peakLat * 1.25);
+  const latRange = Math.max(0.1, maxLat - minLat);
 
   const count = points.length;
   const stepX = width / Math.max(1, count - 1);
@@ -57,14 +82,14 @@ export function PerformanceChart({
   const epsCoords = points.map((p, i) => {
     const x = i * stepX;
     // higher EPS -> lower Y
-    const clampedEps = Math.max(minEps, Math.min(maxEps, p.eps));
+    const clampedEps = Math.max(minEps, Math.min(maxEps, p.eps || minEps));
     const y = height - ((clampedEps - minEps) / epsRange) * (height - 30) - 20;
     return { x, y };
   });
 
   const latCoords = points.map((p, i) => {
     const x = i * stepX;
-    const clampedLat = Math.max(minLat, Math.min(maxLat, p.latency_p50));
+    const clampedLat = Math.max(minLat, Math.min(maxLat, p.latency_p50 || minLat));
     const y = height - ((clampedLat - minLat) / latRange) * (height - 40) - 10;
     return { x, y };
   });
@@ -75,8 +100,16 @@ export function PerformanceChart({
 
   const latestEpsCoord = epsCoords[epsCoords.length - 1] || { x: width, y: 44 };
 
+  const formatEpsLabel = (val: number) => {
+    if (val >= 1000) return `${(val / 1000).toFixed(0)}k EPS`;
+    return `${Math.round(val)} EPS`;
+  };
+
   return (
-    <div className="flex flex-col bg-white p-4 rounded-xl border border-[#E2E8F0] shadow-sm">
+    <div
+      data-tour="performance-chart"
+      className="flex flex-col bg-white p-4 rounded-xl border border-[#E2E8F0] shadow-sm"
+    >
       {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-2 pb-3">
         <div className="flex items-center gap-2">
@@ -106,14 +139,14 @@ export function PerformanceChart({
               Telemetry stream offline
             </span>
             <span className="font-mono text-[0.75rem] text-[#64748B] mt-1 text-center">
-              Backend is not responding on http://127.0.0.1:8080/metrics
+              Backend is not responding on /metrics
             </span>
           </div>
         )}
         <div className="flex justify-between text-[#64748B] font-mono text-[0.6875rem]">
-          <span>160k EPS</span>
-          <span>Target SLA Plateau (142.5k EPS)</span>
-          <span>1.0 µs Latency</span>
+          <span>{formatEpsLabel(maxEps)}</span>
+          <span>Target SLA Plateau (Sub-µs Latency)</span>
+          <span>{minLat.toFixed(1)} µs Latency</span>
         </div>
 
         <svg

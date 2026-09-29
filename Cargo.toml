@@ -46,3 +46,16 @@ libc = "0.2"
 # `serde_yaml`. Neither `unsafe-libyaml` nor that fork is maintained.
 # `default-features = false` drops the unused `strict-deserialise` (serde_ignored).
 noyalib = { version = "0.0.51", default-features = false, features = ["std"] }
+
+[profile.release]
+opt-level = 3
+debug = false
+strip = true
+incremental = false
+lto = "thin"
+codegen-units = 1
+
+[profile.dev]
+debug = 1
+incremental = false
+

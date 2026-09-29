@@ -123,7 +123,7 @@ export function ResultsTable({
           <div className="flex flex-col gap-1 max-w-md">
             <h3 className="text-base font-semibold text-[#1E293B]">Backend Offline</h3>
             <p className="text-xs text-[#64748B]">
-              The investigation backend at 127.0.0.1:8080 could not be reached. Start the Rust backend and retry.
+              The investigation backend could not be reached. Ensure the Rust backend is running and retry.
             </p>
           </div>
           <button

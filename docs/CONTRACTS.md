@@ -32,6 +32,68 @@ Run from the repository root:
 
 ---
 
+## 2a. Release and Image Size Budget
+
+Two numbers that are easy to conflate and must never be quoted as one.
+
+### Release binary — measured, under target
+
+| Artifact | Bytes | Size |
+| :--- | --- | --- |
+| `ulpf` | 15,889,672 | **15.9 MB** (15.2 MiB) |
+| `ulpf-generator` | 1,210,664 | 1.2 MB (1.2 MiB) |
+
+Target is < 35 MB for the CLI. **Met.**
+
+Reproduce with the pinned toolchain and the release profile in `Cargo.toml`
+(`lto = "thin"`, `codegen-units = 1`, `strip = true`):
+
+```bash
+cargo build --release -p ulpf-cli
+stat -c%s target/release/ulpf
+```
+
+This figure was 22.8 MB before the release profile was tuned, and 18.6 MB
+before that. Always re-measure rather than quoting a remembered number.
+
+### Container image — not measured, over target
+
+**No image size is quoted, because none has been measured on this host** (the
+Docker daemon is unavailable in the authoring environment). The budget for the
+current `Dockerfile`:
+
+| Layer | Approx. |
+| :--- | --- |
+| `debian:bookworm-slim` base | ~74 MB |
+| `ulpf` | 15.9 MB |
+| `ulpf-generator` | 1.2 MB |
+| `ca-certificates` | ~0.4 MB |
+| `scripts/simulate_tamper.py` | < 0.1 MB |
+| **Total** | **~92 MB** |
+
+`python3` and `procps` have been removed and `docs/` is no longer copied, which
+saves roughly 20–25 MB. That is a real improvement and worth keeping on its own
+merits, but it does not change the verdict: **the base image alone is more
+than double the 35 MB target.**
+
+Reaching the target requires a different build pipeline, not a trim of this
+one:
+
+1. Fully static `x86_64-unknown-linux-musl` build of the CLI.
+2. `gcr.io/distroless/static` (or `scratch`) as the runtime base — about 2 MB.
+3. Drop `ulpf-generator` from the runtime image; ship it in a separate
+   load-generation image.
+
+That lands at roughly 18 MB. It is **not implemented and not verified**, so
+requirement k stays `partial` and no image size is published. Tracked in #45.
+
+`scripts/run_demo.sh` runs on the host, not inside the container: it shells out
+to `cargo build --release` and executes `target/release/ulpf`, neither of which
+exists in a runtime image. Removing `python3` from the image therefore does not
+affect the demo script, which uses the host's interpreter.
+
+---
+
 ## 3. Endpoints Specification
 
 ### 3.1 `GET /metrics` — Live Telemetry & Mix
@@ -40,33 +102,114 @@ Polled periodically (e.g., every 1 second) by the **#13 Analyst Dashboard**.
 - **Method**: `GET`
 - **Path**: `/metrics`
 - **Response `200 OK`**:
+
+Every value below is measured. **A field that could not be measured is
+`null`** — never `0`, and never a placeholder constant. Note that `0` and
+`null` mean different things: `0` is traffic observed at a genuinely zero
+rate, `null` is nothing measured.
+
+`ulpf serve` and `ulpf ingest` are separate processes, so the live gauges
+(EPS, latency, LRU, queue) cannot be read straight from the ingest task
+graph. The ingest process publishes them to a telemetry sidecar written next
+to the ledger (`data/live_telemetry.json`, atomic write-then-rename) and this
+plane reads it. `telemetry_state` names the three cases explicitly:
+
+| `telemetry_state` | Meaning |
+| :--- | :--- |
+| `LIVE` | Fresh snapshot from a running ingest process |
+| `STALE` | A snapshot exists but is older than the staleness bound, or its writer exited |
+| `ABSENT` | Ingest has never run; there is nothing to report |
+
+A stale or absent snapshot reports `null` for the live gauges rather than
+serving an old reading as though it were current. A number that quietly
+stopped moving is worse than no number.
+
 ```json
 {
-  "eps": 142500.0,
-  "latency_p50_micros": 1.28,
-  "latency_p99_micros": 4.12,
-  "queue_depth": 0,
-  "queue_capacity": 50000,
-  "dropped_count": 0,
-  "lru_hit_rate": 0.962,
-  "total_ingested": 25000,
-  "total_parsed": 25000,
-  "total_blocks": 25,
-  "vendor_mix": {
-    "cisco_asa": 32.5,
-    "fortigate": 28.0,
-    "paloalto": 21.5,
-    "pfsense": 12.0,
-    "suricata": 6.0
-  },
+  "eps": null,
+  "latency_p50_micros": null,
+  "latency_p99_micros": null,
+  "latency_samples": 0,
+  "lru_hit_rate": null,
+  "lru_lookups": null,
+  "queue_depth": null,
+  "queue_capacity": null,
+  "dropped_count": null,
+  "total_ingested": 50000,
+  "total_parsed": null,
+  "total_blocks": 50,
+  "total_anomalies": null,
+  "vendor_mix": {},
   "disposition_breakdown": {
-    "Allowed": 18240,
-    "Blocked": 5610,
-    "Dropped": 1150
+    "Blocked": 264,
+    "Allowed": 1115,
+    "Dropped": 196,
+    "Unknown": 425
   },
-  "status": "HEALTHY"
+  "disposition_sampled": 2000,
+  "telemetry_state": "ABSENT",
+  "telemetry_age_ms": null,
+  "disposition_source": "persisted_parquet_sample",
+  "status": "UNKNOWN"
 }
 ```
+
+Field notes:
+
+- **`vendor_mix`** holds per-vendor **counts**, not percentages. A percentage
+  with no stated base is exactly the kind of number that misleads. An empty
+  object means no vendor has been parsed by the running ingest process; it is
+  never back-filled with a placeholder distribution.
+- **`disposition_breakdown`** is computed over a bounded sample of the
+  persisted Parquet corpus. `disposition_sampled` reports that sample size so
+  the base is explicit. Only dispositions actually present appear.
+- **`status`** is derived from real signals: `HEALTHY`/`DEGRADED` require live
+  telemetry with a measured drop count, `IDLE` means the live pipeline stopped
+  publishing, `UNKNOWN` means live telemetry is unavailable. It is never a
+  constant, and a pipeline that has never been measured is deliberately **not**
+  reported as healthy.
+- **`latency_samples`** is published so the percentiles can be judged
+  representative rather than taken on trust.
+
+Fixtures are generated by running the real code, not hand-written:
+`cargo run -p ulpf-cli --bin ulpf_fixture_gen` regenerates
+`data/fixtures/api/metrics.json` and `alerts.json`.
+
+### 3.1a Caching and freshness
+
+`GET /metrics` is cached, because recomputing it per request means parsing
+the entire append-only ledger and decoding up to 5,000 Parquet records on
+every dashboard poll (every ~1s).
+
+Two layers, two invalidation signals:
+
+| Layer | Cached until | Cost when served |
+| :--- | :--- | :--- |
+| Whole response | 1s TTL | none — no I/O at all |
+| Disposition scan (Parquet) | the block set changes | one `stat` of the ledger |
+
+**What a cached response means.** Inside the TTL the server returns the
+previously computed payload unchanged. It does *not* re-read the telemetry
+sidecar or re-derive `telemetry_state`/`telemetry_age_ms`. Those fields
+describe the freshness of the underlying snapshot **as of the last recompute**,
+and they are passed through rather than rewritten — a cache hit must never
+make stale data look fresher than it is.
+
+Consequences a client should expect:
+
+- A block anchored mid-interval becomes visible on the next refresh, not
+  immediately. With a 1s TTL that is a one-second lag.
+- `telemetry_age_ms` can exceed the TTL on a cache hit, because the sidecar
+  is not re-read while the response is being served. It is a real age of a
+  real snapshot, not a live one.
+- An empty corpus, an absent ledger, or a `null` gauge stays exactly as it
+  was at the last recompute. The cache never invents a value and never
+  converts a `null` into a `0`.
+
+Invalidation of the Parquet layer keys on the ledger's `(mtime, length)`,
+because every anchored block appends a ledger line. Concurrent polls past the
+TTL are serialised, so a burst produces one recompute rather than N.
+
 - **Curl Example**:
 ```bash
 curl -s http://localhost:8080/metrics | jq .
@@ -75,7 +218,16 @@ curl -s http://localhost:8080/metrics | jq .
 ---
 
 ### 3.2 `GET /alerts` — Security & Forensic Alerts Feed
-Returns active security alarms (cryptographic tamper detections and Drain anomaly drift).
+Returns active security alarms derived from real events — currently tamper
+detections from verifying a Parquet block against the Merkle ledger.
+
+**The feed is empty when nothing has actually happened.** It is never
+populated with synthetic entries to make a demo look busy. Earlier revisions
+of this contract documented two unconditional entries (`new_template_drift`,
+`rare_cluster_surge`) that the server appended on every start regardless of
+whether the system had seen any traffic; those were removed rather than
+re-stated here. Parser-drift and surge alerts are emitted by the running
+ingest process while traffic flows, not by the serve plane at rest.
 
 - **Method**: `GET`
 - **Path**: `/alerts`
@@ -83,27 +235,18 @@ Returns active security alarms (cryptographic tamper detections and Drain anomal
 ```json
 [
   {
-    "id": "018e69d7-84b2-7c3a-9e12-4211832049b0",
+    "id": "01a0ec40-fccb-759c-80a9-dd4b9ac10787",
     "alert_type": "tamper_alarm",
     "severity": "Critical",
-    "timestamp": 1789984500000,
+    "timestamp": 1790670077131,
     "title": "Forensic Tamper Alarm in Block #00000",
-    "details": "Corrupted record at leaf 0: calculated SHA-256 94e9f783307521dd does not match stored hash.",
+    "details": "Corrupted record at leaf 0: calculated SHA-256 10f90610737d6556 does not match stored hash.",
     "block_id": 0,
     "leaf_index": 0
-  },
-  {
-    "id": "018e69d7-84b2-7c3a-9e12-4211832049b1",
-    "alert_type": "new_template_drift",
-    "severity": "Medium",
-    "timestamp": 1789984455000,
-    "title": "Parser Drift: Unseen Template Pattern Detected",
-    "details": "DrainMiner identified novel log template: 'RT_FLOW: session <action> <src_ip>/<src_port>-><dst_ip>/<dst_port>'",
-    "block_id": 1,
-    "leaf_index": 12
   }
 ]
 ```
+
 - **Severity Colors**:
   - `Critical` / `High`: Red alert badge
   - `Medium`: Yellow/Orange warning badge

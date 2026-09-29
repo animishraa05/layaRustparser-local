@@ -16,7 +16,7 @@ export function KpiTelemetryCards({
 }: KpiTelemetryCardsProps) {
   if (!metrics || status === "OFFLINE") {
     return (
-      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+      <div data-tour="kpi-cards" className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
         {/* Card 1: Total EPS */}
         <div className="flex flex-col justify-between bg-white p-4 rounded-xl border border-[#E2E8F0] shadow-sm">
           <div className="flex items-start justify-between">
@@ -139,12 +139,13 @@ export function KpiTelemetryCards({
   }
 
   // Sparkline coordinates from history
+  const validHistory = epsHistory.filter((v) => typeof v === "number" && v > 0);
   const points =
-    epsHistory.length >= 2
-      ? epsHistory.slice(-10)
-      : epsHistory.length === 1
-      ? [epsHistory[0], epsHistory[0]]
-      : metrics.eps > 0
+    validHistory.length >= 2
+      ? validHistory.slice(-10)
+      : validHistory.length === 1
+      ? [validHistory[0], validHistory[0]]
+      : typeof metrics.eps === "number" && metrics.eps > 0
       ? [metrics.eps, metrics.eps]
       : [0, 0];
   const minVal = Math.min(...points) * 0.98;
@@ -161,12 +162,15 @@ export function KpiTelemetryCards({
   const pathD = `M${sparkCoords.join(" L")}`;
   const areaD = `M${sparkCoords[0]} L${sparkCoords.join(" L")} L${width},${height} L0,${height} Z`;
 
-  const queuePct = metrics.queue_capacity > 0
-    ? Math.min(100, Math.round((metrics.queue_depth / metrics.queue_capacity) * 100))
-    : 0;
+  const queuePct =
+    typeof metrics.queue_capacity === "number" &&
+    typeof metrics.queue_depth === "number" &&
+    metrics.queue_capacity > 0
+      ? Math.min(100, Math.round((metrics.queue_depth / metrics.queue_capacity) * 100))
+      : 0;
 
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+    <div data-tour="kpi-cards" className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
       {/* Card 1: Total EPS */}
       <div className="flex flex-col justify-between bg-white p-4 rounded-xl border border-[#E2E8F0] shadow-sm hover:shadow-md transition-shadow">
         <div className="flex items-start justify-between">
@@ -179,7 +183,7 @@ export function KpiTelemetryCards({
                 className="text-[2.25rem] text-[#1E293B] font-semibold leading-tight"
                 suppressHydrationWarning
               >
-                {metrics.eps.toLocaleString("en-US")}
+                {typeof metrics.eps === "number" ? metrics.eps.toLocaleString("en-US") : "—"}
               </span>
               <span className="font-mono text-[0.75rem] text-[#64748B]">EPS</span>
             </div>
@@ -239,7 +243,9 @@ export function KpiTelemetryCards({
             </span>
             <div className="flex items-baseline gap-2 mt-1">
               <span className="text-[2.25rem] text-[#1E293B] font-semibold leading-tight">
-                {metrics.latency_p50_micros.toFixed(2)}
+                {typeof metrics.latency_p50_micros === "number"
+                  ? metrics.latency_p50_micros.toFixed(2)
+                  : "—"}
               </span>
               <span className="font-mono text-[0.75rem] text-[#64748B]">µs</span>
             </div>
@@ -255,7 +261,12 @@ export function KpiTelemetryCards({
           <div className="w-full bg-[#F0F3FF] h-2 rounded-full overflow-hidden flex">
             <div
               className="bg-[#006398] h-full rounded-full transition-all duration-300"
-              style={{ width: `${Math.min(100, Math.max(5, (metrics.latency_p50_micros / 50.0) * 100))}%` }}
+              style={{
+                width: `${Math.min(
+                  100,
+                  Math.max(5, ((metrics.latency_p50_micros ?? 1.28) / 50.0) * 100)
+                )}%`,
+              }}
             ></div>
           </div>
         </div>
@@ -263,7 +274,7 @@ export function KpiTelemetryCards({
         <div className="flex items-center justify-between text-[#64748B] font-mono text-[0.75rem] pt-1 border-t border-[#F1F5F9]">
           <span>Target: &lt;50.0 µs</span>
           <span className="text-[#1E293B] font-medium">
-            P99: {metrics.latency_p99_micros.toFixed(2)} µs
+            P99: {typeof metrics.latency_p99_micros === "number" ? `${metrics.latency_p99_micros.toFixed(2)} µs` : "—"}
           </span>
         </div>
       </div>
@@ -277,7 +288,9 @@ export function KpiTelemetryCards({
             </span>
             <div className="flex items-baseline gap-2 mt-1">
               <span className="text-[2.25rem] text-[#1E293B] font-semibold leading-tight">
-                {(metrics.lru_hit_rate * 100).toFixed(1)}
+                {typeof metrics.lru_hit_rate === "number"
+                  ? (metrics.lru_hit_rate * 100).toFixed(1)
+                  : "—"}
               </span>
               <span className="font-mono text-[0.75rem] text-[#64748B]">%</span>
             </div>
@@ -311,13 +324,13 @@ export function KpiTelemetryCards({
             </span>
             <div className="flex items-baseline gap-2 mt-1">
               <span className="text-[2.25rem] text-[#1E293B] font-semibold leading-tight">
-                {metrics.queue_depth}
+                {typeof metrics.queue_depth === "number" ? metrics.queue_depth : "—"}
               </span>
               <span
                 className="font-mono text-[0.75rem] text-[#64748B]"
                 suppressHydrationWarning
               >
-                / {metrics.queue_capacity.toLocaleString("en-US")}
+                / {typeof metrics.queue_capacity === "number" ? metrics.queue_capacity.toLocaleString("en-US") : "—"}
               </span>
             </div>
           </div>

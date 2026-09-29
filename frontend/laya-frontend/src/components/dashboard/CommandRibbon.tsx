@@ -26,7 +26,10 @@ export function CommandRibbon({
   };
 
   return (
-    <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4 bg-white p-4 rounded-xl border border-[#E2E8F0] shadow-sm">
+    <div
+      data-tour="command-ribbon"
+      className="flex flex-col xl:flex-row xl:items-center justify-between gap-4 bg-white p-4 rounded-xl border border-[#E2E8F0] shadow-sm"
+    >
       <div className="flex flex-col gap-1">
         <div className="flex items-center gap-1.5 text-[#64748B] font-mono text-[0.75rem] uppercase tracking-wide">
           <span>SOC</span>

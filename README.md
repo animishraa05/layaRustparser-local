@@ -6,7 +6,7 @@
 [![Schema](https://img.shields.io/badge/schema-OCSF%201.3-green.svg)](https://schema.ocsf.io/)
 [![Integrity](https://img.shields.io/badge/integrity-RFC%206962%20Merkle-purple.svg)](https://datatracker.ietf.org/doc/html/rfc6962)
 [![Air--Gap](https://img.shields.io/badge/deployment-100%25%20Air--Gapped-red.svg)](#air-gapped-deployment)
-[![Size](https://img.shields.io/badge/binary-22.8%20MB%20%3C%2035%20MB%20req-orange.svg)](#requirements-matrix)
+[![Size](https://img.shields.io/badge/binary-15.9%20MB%20%3C%2035%20MB%20req-green.svg)](#requirements-matrix)
 [![Repo](https://img.shields.io/badge/github-guptchar%2FlayaRustparser-blue.svg)](https://github.com/guptchar/layaRustparser)
 [![CI](https://github.com/guptchar/layaRustparser/actions/workflows/ci.yml/badge.svg)](https://github.com/guptchar/layaRustparser/actions/workflows/ci.yml)
 [![DeepWiki](https://img.shields.io/badge/docs-DeepWiki-blue.svg)](https://deepwiki.com/guptchar/layaRustparser)
@@ -29,7 +29,7 @@ New here? Ask questions about the codebase in plain English on our [DeepWiki](ht
 - **Action inviolability enforced on anchor tokens.** `ALLOW`/`PERMIT`/`ACCEPT` can never land in the same template cluster as `DENY`/`DROP`/`BLOCK`/`REJECT`; corpus-wide disposition purity is measured strictly in the [duel report](docs/benchmarks/eval_duel_report.md).
 - **Beats vanilla Drain 4–0.** The committed [duel](docs/benchmarks/eval_duel_report.md) runs both engines over probe, fuzzed, BGL and Thunderbird rounds; 3-tier wins grouping accuracy on **all four** (e.g. 98.41% vs 71.73% on fuzzed input).
 - **4,312× template compression.** 224,657 lines collapse to **32** Drain templates (baseline: 137,986) with template accuracy still at 100% — a ready-made feature table for any SIEM/ML system.
-- **Air-gapped for real.** Zero outbound calls, no telemetry, no model downloads. One static **22.8 MB** binary (requirement: < 35 MB), plus Docker.
+- **Air-gapped for real.** Zero outbound calls, no telemetry, no model downloads. One **15.9 MB** release binary (requirement: < 35 MB), plus Docker.
 
 Every accuracy number links to a timestamped report from `ulpf evaluate`, and every table regenerates with one command (see [Reproduce the proof](#reproduce-the-proof)).
 
@@ -96,6 +96,26 @@ python3 scripts/gen_adversarial.py --full 25000
 ./target/release/ulpf verify --file data/parquet/block_00000.parquet --ledger data/ledger.jsonl
 ```
 
+### Verifying the binary-size claim
+
+The **15.9 MB** figure quoted above is measured, not asserted. It was taken on
+2026-09-29 with the toolchain pinned in `rust-toolchain.toml` and the release
+profile in `Cargo.toml` (`lto = "thin"`, `codegen-units = 1`, `strip = true`):
+
+```bash
+cargo build --release -p ulpf-cli
+stat -c%s target/release/ulpf   # 15,889,672 bytes = 15.9 MB (15.2 MiB)
+```
+
+Re-run that before quoting the number. The size dropped from 22.8 MB when the
+release profile was tuned, which is exactly how the earlier 18.6 MB figure went
+stale — a published number with no command next to it rots silently.
+
+The **container image** is a separate number and is **not** measured. See the
+requirements matrix (row k) and [#45](https://github.com/guptchar/layaRustparser/issues/45)
+for why the current base image makes the < 35 MB target unreachable, and what
+would have to change.
+
 > `evaluate`/`benchmark` need **release** builds on an idle machine: accuracy rows are deterministic, timing rows swing with load — hence the report timestamps. Exit codes: **0 valid · 1 IO error · 2 tamper**; console transcript in [`docs/SCORECARDS.md`](docs/SCORECARDS.md#cryptographic-chain-of-custody).
 
 ## Testing & verification gate
@@ -124,8 +144,8 @@ cargo test --workspace --no-fail-fast
 | g | Efficient SIEM and Data Lake integration | yes | Parquet WORM blocks, queryable via DuckDB/pandas ([snippet](#data-locations--programmatic-access)) |
 | h | AI/ML-ready security and operational analytics | yes | **32 Drain templates from 224,657 lines (4,312× compression)** — pre-clustered feature IDs ([scorecards](docs/SCORECARDS.md)) |
 | i | Reduced parser development effort | yes | sample file → parser spec in **ms**, not days (quick start 7, [`docs/ONBOARDING_RUNBOOK.md`](docs/ONBOARDING_RUNBOOK.md)) |
-| j | Deployable in an air-gapped network | yes | single self-contained binaries, **zero** outbound calls anywhere in the runtime path |
-| k | Packaged in a container for platform independence (target < 35 MB) | partial | binary **≈ 22.8 MB on disk, inside the 35 MB target**; image itself still over target — slim-down is planned ([#45](https://github.com/guptchar/layaRustparser/issues/45)) |
+| j | Deployable in an air-gapped network | yes | single binary with **zero** outbound calls anywhere in the runtime path. Dynamically linked against glibc (`libc`, `libm`, `libgcc_s`) — not a static build; a fully static musl build is not implemented ([#45](https://github.com/guptchar/layaRustparser/issues/45)) |
+| k | Packaged in a container for platform independence (target < 35 MB) | partial | binary **15.9 MB measured**, inside the 35 MB target; **image size is not measured and is known to be over target** — the current `debian:bookworm-slim` base alone exceeds 35 MB before any of our code. Reaching the target needs a static musl build on `distroless/static`; see [#45](https://github.com/guptchar/layaRustparser/issues/45) for the size budget |
 
 Canonical verdicts with design, code, tests, and measured rows: [`docs/SRS.md`](docs/SRS.md). (The older tables in [`docs/archive/SIH_EVALUATION_DOSSIER.md`](docs/archive/SIH_EVALUATION_DOSSIER.md) §4 and [`docs/ARCHITECTURE_FINAL.md`](docs/ARCHITECTURE_FINAL.md) §4 are superseded/corrected to match it.)
 

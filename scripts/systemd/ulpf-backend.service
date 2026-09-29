@@ -1,0 +1,18 @@
+[Unit]
+Description=ULPF Air-Gapped High-Performance REST API Server
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/layaRustparser
+ExecStart=/home/ubuntu/layaRustparser/target/release/ulpf serve --port 8080 --host 0.0.0.0
+Restart=always
+RestartSec=3
+LimitNOFILE=65536
+Environment=RUST_LOG=info
+StandardOutput=append:/home/ubuntu/layaRustparser/serve.log
+StandardError=append:/home/ubuntu/layaRustparser/serve.log
+
+[Install]
+WantedBy=multi-user.target

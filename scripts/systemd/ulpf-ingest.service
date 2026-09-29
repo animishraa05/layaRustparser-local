@@ -1,0 +1,17 @@
+[Unit]
+Description=ULPF High-Throughput Syslog Ingestion Engine (UDP/TCP 5140)
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/layaRustparser
+ExecStart=/home/ubuntu/layaRustparser/target/release/ulpf ingest --udp 0.0.0.0:5140 --tcp 0.0.0.0:5140 --parquet-dir data/parquet --ledger data/ledger.jsonl --batch-size 1000 --batch-timeout 2000
+Restart=always
+RestartSec=3
+LimitNOFILE=1048576
+StandardOutput=append:/home/ubuntu/layaRustparser/ingest.log
+StandardError=append:/home/ubuntu/layaRustparser/ingest.log
+
+[Install]
+WantedBy=multi-user.target
