@@ -72,6 +72,14 @@
 | **Compression Ratio** | 45% (Gzip raw) | **> 82% (Parquet + Snappy)** | **3.8x Storage Savings** |
 | **Deployment Mode** | Cloud-dependent dependencies | **100% Air-Gapped Docker** (image slim-down in progress — SRS §3.k: partial) | **Zero External Network Calls** |
 
+#### Judge Q&A — "What happens at a 500k EPS burst?"
+
+One socket holds 50k EPS loss-free (measured). Past that UDP drops in
+the kernel, TCP backpressures the sender with zero loss, and the queue
+sheds only under opt-in `--drop-on-full` — every path counted on the
+live reporter. 500k on one socket was not reached; the run log and the
+repro recipe are [`docs/INGEST_LIMITS.md`](docs/INGEST_LIMITS.md).
+
 #### SIH Deliverables Checklist:
 * [x] **Source Code:** Complete modular Rust workspace with zero compiler warnings.
 * [x] **Setup Documentation:** `README.md` with 1-command Docker and local setup.
