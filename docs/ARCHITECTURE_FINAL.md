@@ -92,7 +92,7 @@ We architected a clean **Two-Tier Processing Separation**:
    ];
    let ac = AhoCorasick::new(&patterns).expect("valid patterns");
    ```
-   - **Performance:** Scans the raw log buffer in **sub-microsecond time** (O(m) scan), immediately classifying the stream into `VendorKind::CiscoAsa`, `Fortinet`, `PaloAlto`, `Suricata`, `PfSense`, or `Unknown`. Gated by `test_classification_sub_microsecond_benchmark` (< 2 µs per classification). Reproduce: `cargo test -p ulpf-core --test parser_tests test_classification_sub_microsecond_benchmark`.
+   - **Performance:** Scans the raw log buffer in **sub-microsecond time** (O(m) scan), immediately classifying the stream into `VendorKind::CiscoAsa`, `Fortinet`, `PaloAlto`, `Suricata`, `PfSense`, or `Unknown`. Gated by `test_classification_sub_microsecond_benchmark` (< 2 µs per classification in release builds; debug asserts a loose smoke bound over the median of 5 warmed-up rounds, so loaded machines don't flake — issue #58). Reproduce: `cargo test -p ulpf-core --test parser_tests test_classification_sub_microsecond_benchmark`.
 2. **Tier 2: Specialized Zero-Copy Extractors:** Routes directly to the designated extractor without evaluating any unrelated parsing rules.
 
 ---

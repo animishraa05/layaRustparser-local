@@ -1,6 +1,6 @@
 # AGENTS.md — ULPF (Universal Log Pre-processing Framework)
 
-Compact agent handbook for this Rust workspace. `README.md` and `docs/` have full docs — but **some README CLI examples are stale, trust `ulpf --help`** (see Gotchas). There is **no pre-commit or typecheck config**; run the local verification gate before every commit, and CI mirrors it on PRs and on pushes except docs-only changes ignored by workflow `paths-ignore` (with documented skips like the known flaky benchmark test). If local and CI disagree, CI is authoritative for mergeability.
+Compact agent handbook for this Rust workspace. `README.md` and `docs/` have full docs — but **some README CLI examples are stale, trust `ulpf --help`** (see Gotchas). There is **no pre-commit or typecheck config**; run the local verification gate before every commit, and CI mirrors it on PRs and on pushes except docs-only changes ignored by workflow `paths-ignore`. If local and CI disagree, CI is authoritative for mergeability.
 
 ## Non-negotiable invariants
 
@@ -28,7 +28,7 @@ Real entrypoints: `crates/ulpf-cli/src/main.rs`, `crates/ulpf-generator/src/main
 ## Commands (all verified locally)
 
 ```bash
-# Verification gate — run in this order before every commit. CI mirrors this on push/PR (minus documented CI-only skips).
+# Verification gate — run in this order before every commit. CI mirrors this on push/PR.
 cargo clippy --workspace --all-targets -- -A clippy::too_many_arguments -A clippy::field_reassign_with_default -D warnings
 cargo fmt --all -- --check
 cargo test --workspace        # ~131 tests and growing; ai/duel suites dominate runtime
@@ -55,7 +55,7 @@ Performance gates when touching hot path or miner: p50 < 5.0 µs, LRU hit rate >
 - **Tracked fixtures are deliberately odd:** `data/parquet/block_00000.parquet` is *intentionally* tampered (`ulpf verify` must FAIL on it); `block_00001.parquet` is the valid one. Don't "fix" block 0.
 - **Benchmark ritual (reproducible latency rows):** machine must be idle — check `uptime` (1-min loadavg < `nproc`) before running. `--release` binary only, never `cargo run` numbers. Pin threads (`--threads`, same value both engines). Median of 3 runs per corpus; always quote the same-run baseline-vs-tiered ratio — absolute µs never stand alone (same corpus seen 73 µs idle → 1,104 µs busy). Noise band: same-run ratios within ~10%; absolute µs not comparable across machines. Enforced by `scripts/bench.sh`.
 - **Small-corpus tiered throughput 0.82–0.97× is DESIGNED, not chased:** Drain cluster bookkeeping the pure baseline skips; tiers pay off at scale (2.15× at 224k).
-- **Known flaky test under load:** `ulpf-core/tests/parser_tests.rs::test_classification_sub_microsecond_benchmark` asserts < 2 µs/classification in a *debug* build and can fail on busy machines. Re-run before assuming you broke something.
+- **Micro-benchmark timing is deterministic, not load-flaky (issue #58):** `ulpf-core/tests/parser_tests.rs::test_classification_sub_microsecond_benchmark` warms up unmeasured, takes the median of 5 timed rounds over the same 5 samples, and release-gates the strict bound (< 2 µs in `--release`; debug asserts a loose 50 µs smoke bound). It runs in CI with no `--skip`; no re-run ritual needed.
 - **Dataset generator paths are repo-relative (P10.0):** `scripts/populate_datasets.py` writes to `<repo>/data/raw` (override with `ULPF_OUT_DIR`); `ulpf-generator`'s `locate_data_dir` only probes repo-relative `data/raw` candidates — the old `/home/human/...` foreign fallback was removed.
 - **`.gitignore` ignores `*.log`** with explicit whitelists (`data/raw/*`, `sample_new_firewall.log`); new raw datasets under other paths need a negation rule to be tracked. `data/parsers/*.{json,yaml}` (onboarder output) is intentionally ignored.
 
