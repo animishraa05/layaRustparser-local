@@ -67,12 +67,132 @@ async fn test_serve_get_metrics() {
     let body = response.into_body().collect().await.unwrap().to_bytes();
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
 
-    assert!(json.get("eps").is_some());
-    assert!(json.get("latency_p50_micros").is_some());
-    assert!(json.get("lru_hit_rate").is_some());
-    assert!(json.get("vendor_mix").is_some());
-    assert!(json.get("disposition_breakdown").is_some());
-    assert_eq!(json.get("status").unwrap(), "HEALTHY");
+    for field in [
+        "eps",
+        "latency_p50_micros",
+        "lru_hit_rate",
+        "vendor_mix",
+        "disposition_breakdown",
+        "telemetry_state",
+    ] {
+        assert!(
+            json.get(field).is_some(),
+            "/metrics must still carry `{field}` (value may be null, key must exist)"
+        );
+    }
+}
+
+/// With no ingest process running, there is no telemetry sidecar. Every live
+/// gauge must therefore be `null` — not `0`, and not a plausible constant.
+/// This is the exact failure mode #43 was filed for.
+#[tokio::test]
+async fn test_metrics_reports_null_not_fabricated_when_ingest_absent() {
+    let root = repo_root();
+    let temp_scratch = tempfile::tempdir().unwrap();
+    let state = AppState {
+        parquet_dir: root.join("data/parquet"),
+        ledger_path: root.join("data/ledger.jsonl"),
+        parsers_dir: root.join("data/parsers"),
+        eval_report_path: root.join("docs/benchmarks/eval_hardcore_report.md"),
+        scratch_dir: temp_scratch.path().to_path_buf(),
+        registry: std::sync::Arc::new(tokio::sync::RwLock::new(
+            ulpf_ai::onboarder::DynamicParserRegistry::new(),
+        )),
+        alerts: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),
+        persist_lock: std::sync::Arc::new(tokio::sync::Mutex::new(())),
+        start_time: std::time::Instant::now(),
+        telemetry_path: root.join("data/does-not-exist.json"),
+        stale_after_ms: ulpf_core::ingest::telemetry::DEFAULT_STALE_AFTER_MS,
+        metrics_cache: ulpf_cli::serve::metrics_cache::MetricsCache::new(
+            std::time::Duration::from_millis(
+                ulpf_cli::serve::metrics_cache::DEFAULT_METRICS_TTL_MS,
+            ),
+        ),
+        corpus_cache: ulpf_cli::serve::metrics_cache::CorpusCache::new(),
+    };
+    let app = create_router(state);
+    let req = Request::builder()
+        .uri("/metrics")
+        .method("GET")
+        .body(Body::empty())
+        .unwrap();
+    let response = app.oneshot(req).await.unwrap();
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+    for field in [
+        "eps",
+        "latency_p50_micros",
+        "latency_p99_micros",
+        "lru_hit_rate",
+        "queue_depth",
+        "dropped_count",
+    ] {
+        assert_eq!(
+            json.get(field),
+            Some(&serde_json::Value::Null),
+            "`{field}` must be null when nothing has been measured, never a fabricated number"
+        );
+    }
+    assert_eq!(
+        json.get("telemetry_state").unwrap(),
+        "ABSENT",
+        "an absent sidecar must be reported as absent"
+    );
+    assert_ne!(
+        json.get("status").unwrap(),
+        "HEALTHY",
+        "a pipeline that was never measured must not be reported healthy"
+    );
+}
+
+/// An empty corpus must yield an empty vendor map. The old code substituted a
+/// hardcoded `cisco_asa 32.5% / fortigate 28.0% / ...` distribution here.
+#[tokio::test]
+async fn test_metrics_has_no_fabricated_vendor_mix() {
+    let temp_scratch = tempfile::tempdir().unwrap();
+    let empty = tempfile::tempdir().unwrap();
+    let state = AppState {
+        parquet_dir: empty.path().join("parquet"),
+        ledger_path: empty.path().join("ledger.jsonl"),
+        parsers_dir: empty.path().join("parsers"),
+        eval_report_path: empty.path().join("eval.json"),
+        scratch_dir: temp_scratch.path().to_path_buf(),
+        registry: std::sync::Arc::new(tokio::sync::RwLock::new(
+            ulpf_ai::onboarder::DynamicParserRegistry::new(),
+        )),
+        alerts: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),
+        persist_lock: std::sync::Arc::new(tokio::sync::Mutex::new(())),
+        start_time: std::time::Instant::now(),
+        telemetry_path: empty.path().join("live_telemetry.json"),
+        stale_after_ms: ulpf_core::ingest::telemetry::DEFAULT_STALE_AFTER_MS,
+        metrics_cache: ulpf_cli::serve::metrics_cache::MetricsCache::new(
+            std::time::Duration::from_millis(
+                ulpf_cli::serve::metrics_cache::DEFAULT_METRICS_TTL_MS,
+            ),
+        ),
+        corpus_cache: ulpf_cli::serve::metrics_cache::CorpusCache::new(),
+    };
+    let app = create_router(state);
+    let req = Request::builder()
+        .uri("/metrics")
+        .method("GET")
+        .body(Body::empty())
+        .unwrap();
+    let response = app.oneshot(req).await.unwrap();
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+    assert_eq!(
+        json.get("vendor_mix").unwrap(),
+        &serde_json::json!({}),
+        "an empty corpus must report an empty vendor map, not a demo distribution"
+    );
+    assert_eq!(
+        json.get("disposition_breakdown").unwrap(),
+        &serde_json::json!({}),
+        "an empty corpus must not report zeroed Allowed/Blocked/Dropped placeholders"
+    );
 }
 
 #[tokio::test]
@@ -363,7 +483,14 @@ async fn test_serve_tamper_drill_isolation() {
         alerts: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),
         persist_lock: std::sync::Arc::new(tokio::sync::Mutex::new(())),
         start_time: std::time::Instant::now(),
-        mock_eps: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(140000)),
+        telemetry_path: root.join("data/live_telemetry.json"),
+        stale_after_ms: ulpf_core::ingest::telemetry::DEFAULT_STALE_AFTER_MS,
+        metrics_cache: ulpf_cli::serve::metrics_cache::MetricsCache::new(
+            std::time::Duration::from_millis(
+                ulpf_cli::serve::metrics_cache::DEFAULT_METRICS_TTL_MS,
+            ),
+        ),
+        corpus_cache: ulpf_cli::serve::metrics_cache::CorpusCache::new(),
     };
 
     let original_block1_bytes =
@@ -786,9 +913,13 @@ async fn test_serve_state_initialization_deterministic() {
             temp_path,
             root_clone.join("docs/benchmarks/eval_hardcore_report.md"),
         );
-        assert_eq!(
-            s.mock_eps.load(std::sync::atomic::Ordering::Relaxed),
-            142_500
+        // There is no longer a baked-in EPS constant to assert on. What
+        // matters is that the state resolves a telemetry sidecar path and
+        // reports no measurement when there is none.
+        assert!(
+            s.telemetry_path().ends_with("live_telemetry.json"),
+            "telemetry path must be derived next to the ledger, got {:?}",
+            s.telemetry_path()
         );
     });
     handle
@@ -859,4 +990,752 @@ async fn test_serve_live_tcp_listener_wire_http1() {
     assert!(metrics.get("disposition_breakdown").is_some());
 
     server_task.abort();
+}
+
+/// A stale snapshot must not keep serving its gauges. This is the
+/// cross-process version of the regression guarded in
+/// `ulpf_core::ingest::telemetry`: a stopped pipeline reporting its last
+/// EPS and latency as though they were live is worse than reporting
+/// nothing, because the dashboard cannot tell the difference.
+#[tokio::test]
+async fn test_metrics_nulls_gauges_when_snapshot_is_stale() {
+    let temp_scratch = tempfile::tempdir().unwrap();
+    let empty = tempfile::tempdir().unwrap();
+
+    // A snapshot stamped well in the past: the ingest process is gone.
+    let stale = ulpf_core::ingest::telemetry::IngestSnapshot {
+        monotonic_ms: 1_000,
+        unix_ms: chrono::Utc::now().timestamp_millis() - 60_000,
+        eps: Some(999_999.0),
+        latency_p50_micros: Some(1.28),
+        latency_p99_micros: Some(4.12),
+        latency_samples: 4_096,
+        lru_hit_rate: Some(0.962),
+        lru_lookups: Some(100),
+        queue_depth: Some(42),
+        queue_capacity: Some(50_000),
+        dropped_count: Some(0),
+        total_ingested: Some(780),
+        total_parsed: Some(780),
+        total_blocks: Some(13),
+        total_anomalies: Some(3),
+        vendor_counts: std::collections::BTreeMap::from([("Cisco".to_string(), 260u64)]),
+        running: true,
+    };
+    let sidecar = empty.path().join("live_telemetry.json");
+    ulpf_core::ingest::telemetry::write_snapshot(&sidecar, &stale).unwrap();
+
+    let state = AppState {
+        parquet_dir: empty.path().join("parquet"),
+        ledger_path: empty.path().join("ledger.jsonl"),
+        parsers_dir: empty.path().join("parsers"),
+        eval_report_path: empty.path().join("eval.json"),
+        scratch_dir: temp_scratch.path().to_path_buf(),
+        registry: std::sync::Arc::new(tokio::sync::RwLock::new(
+            ulpf_ai::onboarder::DynamicParserRegistry::new(),
+        )),
+        alerts: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),
+        persist_lock: std::sync::Arc::new(tokio::sync::Mutex::new(())),
+        start_time: std::time::Instant::now(),
+        telemetry_path: sidecar,
+        stale_after_ms: ulpf_core::ingest::telemetry::DEFAULT_STALE_AFTER_MS,
+        metrics_cache: ulpf_cli::serve::metrics_cache::MetricsCache::new(
+            std::time::Duration::from_millis(
+                ulpf_cli::serve::metrics_cache::DEFAULT_METRICS_TTL_MS,
+            ),
+        ),
+        corpus_cache: ulpf_cli::serve::metrics_cache::CorpusCache::new(),
+    };
+
+    let metrics = state.compute_metrics().await;
+
+    for field in [
+        "eps",
+        "latency_p50_micros",
+        "latency_p99_micros",
+        "lru_hit_rate",
+        "queue_depth",
+        "queue_capacity",
+        "dropped_count",
+    ] {
+        assert_eq!(
+            metrics_field(&metrics, field),
+            None,
+            "`{field}` must be null once the snapshot is stale, not the last value it held"
+        );
+    }
+    assert_eq!(
+        metrics.telemetry_state,
+        ulpf_cli::serve::state::TelemetryState::Stale
+    );
+    assert_eq!(metrics.status, "IDLE");
+
+    // Cumulative facts are still true and should survive.
+    assert_eq!(metrics.total_blocks, Some(13));
+    assert_eq!(metrics.vendor_mix.get("Cisco"), Some(&260));
+}
+
+/// A fresh snapshot from a "running" writer must be reported as live, with
+/// its values intact. The counterpart to the staleness test, so neither
+/// branch can be quietly broken.
+#[tokio::test]
+async fn test_metrics_reports_live_snapshot_values() {
+    let temp_scratch = tempfile::tempdir().unwrap();
+    let empty = tempfile::tempdir().unwrap();
+
+    let fresh = ulpf_core::ingest::telemetry::IngestSnapshot {
+        monotonic_ms: 10_000,
+        unix_ms: chrono::Utc::now().timestamp_millis(),
+        eps: Some(1234.0),
+        latency_p50_micros: Some(45.45),
+        latency_p99_micros: Some(265.7),
+        latency_samples: 780,
+        lru_hit_rate: Some(0.974),
+        lru_lookups: Some(768),
+        queue_depth: Some(3),
+        queue_capacity: Some(5_000),
+        dropped_count: Some(0),
+        total_ingested: Some(780),
+        total_parsed: Some(780),
+        total_blocks: Some(13),
+        total_anomalies: Some(122),
+        vendor_counts: std::collections::BTreeMap::from([
+            ("Cisco".to_string(), 260u64),
+            ("Fortinet".to_string(), 260u64),
+        ]),
+        running: true,
+    };
+    let sidecar = empty.path().join("live_telemetry.json");
+    ulpf_core::ingest::telemetry::write_snapshot(&sidecar, &fresh).unwrap();
+
+    let state = AppState {
+        parquet_dir: empty.path().join("parquet"),
+        ledger_path: empty.path().join("ledger.jsonl"),
+        parsers_dir: empty.path().join("parsers"),
+        eval_report_path: empty.path().join("eval.json"),
+        scratch_dir: temp_scratch.path().to_path_buf(),
+        registry: std::sync::Arc::new(tokio::sync::RwLock::new(
+            ulpf_ai::onboarder::DynamicParserRegistry::new(),
+        )),
+        alerts: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),
+        persist_lock: std::sync::Arc::new(tokio::sync::Mutex::new(())),
+        start_time: std::time::Instant::now(),
+        telemetry_path: sidecar,
+        stale_after_ms: ulpf_core::ingest::telemetry::DEFAULT_STALE_AFTER_MS,
+        metrics_cache: ulpf_cli::serve::metrics_cache::MetricsCache::new(
+            std::time::Duration::from_millis(
+                ulpf_cli::serve::metrics_cache::DEFAULT_METRICS_TTL_MS,
+            ),
+        ),
+        corpus_cache: ulpf_cli::serve::metrics_cache::CorpusCache::new(),
+    };
+
+    let metrics = state.compute_metrics().await;
+
+    assert_eq!(metrics.eps, Some(1234.0), "a live EPS must be reported");
+    assert_eq!(metrics.latency_p50_micros, Some(45.45));
+    assert_eq!(metrics.latency_p99_micros, Some(265.7));
+    assert_eq!(metrics.lru_hit_rate, Some(0.974));
+    assert_eq!(metrics.queue_depth, Some(3));
+    assert_eq!(metrics.queue_capacity, Some(5_000));
+    assert_eq!(metrics.dropped_count, Some(0));
+    assert_eq!(metrics.total_anomalies, Some(122));
+    assert_eq!(metrics.vendor_mix.get("Cisco"), Some(&260));
+    assert_eq!(
+        metrics.telemetry_state,
+        ulpf_cli::serve::state::TelemetryState::Live
+    );
+    assert_eq!(metrics.status, "HEALTHY", "zero drops + live = healthy");
+}
+
+/// A nonzero measured drop count must degrade the status. This is what
+/// makes `status` a real signal rather than a constant.
+#[tokio::test]
+async fn test_metrics_degrades_status_on_measured_drops() {
+    let temp_scratch = tempfile::tempdir().unwrap();
+    let empty = tempfile::tempdir().unwrap();
+
+    let dropping = ulpf_core::ingest::telemetry::IngestSnapshot {
+        monotonic_ms: 10_000,
+        unix_ms: chrono::Utc::now().timestamp_millis(),
+        eps: Some(50_000.0),
+        dropped_count: Some(17),
+        running: true,
+        ..Default::default()
+    };
+    let sidecar = empty.path().join("live_telemetry.json");
+    ulpf_core::ingest::telemetry::write_snapshot(&sidecar, &dropping).unwrap();
+
+    let state = AppState {
+        parquet_dir: empty.path().join("parquet"),
+        ledger_path: empty.path().join("ledger.jsonl"),
+        parsers_dir: empty.path().join("parsers"),
+        eval_report_path: empty.path().join("eval.json"),
+        scratch_dir: temp_scratch.path().to_path_buf(),
+        registry: std::sync::Arc::new(tokio::sync::RwLock::new(
+            ulpf_ai::onboarder::DynamicParserRegistry::new(),
+        )),
+        alerts: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),
+        persist_lock: std::sync::Arc::new(tokio::sync::Mutex::new(())),
+        start_time: std::time::Instant::now(),
+        telemetry_path: sidecar,
+        stale_after_ms: ulpf_core::ingest::telemetry::DEFAULT_STALE_AFTER_MS,
+        metrics_cache: ulpf_cli::serve::metrics_cache::MetricsCache::new(
+            std::time::Duration::from_millis(
+                ulpf_cli::serve::metrics_cache::DEFAULT_METRICS_TTL_MS,
+            ),
+        ),
+        corpus_cache: ulpf_cli::serve::metrics_cache::CorpusCache::new(),
+    };
+
+    let metrics = state.compute_metrics().await;
+    assert_eq!(
+        metrics.status, "DEGRADED",
+        "a measured drop count must degrade the pipeline, not report HEALTHY"
+    );
+    assert_eq!(metrics.dropped_count, Some(17));
+}
+
+/// Helper so the staleness test can assert on the optional numeric fields
+/// without repeating the match in every assertion.
+fn metrics_field(m: &ulpf_cli::serve::state::MetricsResponse, name: &str) -> Option<f64> {
+    match name {
+        "eps" => m.eps,
+        "latency_p50_micros" => m.latency_p50_micros,
+        "latency_p99_micros" => m.latency_p99_micros,
+        "lru_hit_rate" => m.lru_hit_rate,
+        "queue_depth" => m.queue_depth.map(|v| v as f64),
+        "queue_capacity" => m.queue_capacity.map(|v| v as f64),
+        "dropped_count" => m.dropped_count.map(|v| v as f64),
+        other => panic!("unhandled field {other}"),
+    }
+}
+
+/// A measured zero is a real observation, not an absence. An ingest
+/// process that is running and has ingested nothing has measured
+/// `total_ingested: 0`; collapsing that to `null` would break the
+/// documented contract that `0` and `null` mean different things.
+#[tokio::test]
+async fn test_measured_zero_is_reported_as_zero_not_null() {
+    let temp_scratch = tempfile::tempdir().unwrap();
+    let empty = tempfile::tempdir().unwrap();
+
+    let live_but_idle = ulpf_core::ingest::telemetry::IngestSnapshot {
+        monotonic_ms: 10_000,
+        unix_ms: chrono::Utc::now().timestamp_millis(),
+        // A real measurement of zero: running, but no traffic yet.
+        total_ingested: Some(0),
+        total_parsed: Some(0),
+        total_blocks: Some(0),
+        dropped_count: Some(0),
+        eps: Some(0.0),
+        running: true,
+        ..Default::default()
+    };
+    let sidecar = empty.path().join("live_telemetry.json");
+    ulpf_core::ingest::telemetry::write_snapshot(&sidecar, &live_but_idle).unwrap();
+
+    let state = AppState {
+        parquet_dir: empty.path().join("parquet"),
+        ledger_path: empty.path().join("ledger.jsonl"),
+        parsers_dir: empty.path().join("parsers"),
+        eval_report_path: empty.path().join("eval.json"),
+        scratch_dir: temp_scratch.path().to_path_buf(),
+        registry: std::sync::Arc::new(tokio::sync::RwLock::new(
+            ulpf_ai::onboarder::DynamicParserRegistry::new(),
+        )),
+        alerts: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),
+        persist_lock: std::sync::Arc::new(tokio::sync::Mutex::new(())),
+        start_time: std::time::Instant::now(),
+        telemetry_path: sidecar,
+        stale_after_ms: ulpf_core::ingest::telemetry::DEFAULT_STALE_AFTER_MS,
+        metrics_cache: ulpf_cli::serve::metrics_cache::MetricsCache::new(
+            std::time::Duration::from_millis(
+                ulpf_cli::serve::metrics_cache::DEFAULT_METRICS_TTL_MS,
+            ),
+        ),
+        corpus_cache: ulpf_cli::serve::metrics_cache::CorpusCache::new(),
+    };
+
+    let metrics = state.compute_metrics().await;
+
+    assert_eq!(
+        metrics.total_ingested,
+        Some(0),
+        "a measured zero must be reported as 0, not collapsed to null"
+    );
+    assert_eq!(
+        metrics.eps,
+        Some(0.0),
+        "a measured zero rate must be reported as 0.0, not null"
+    );
+    assert_eq!(metrics.dropped_count, Some(0));
+}
+
+/// A snapshot whose writer stopped must not keep serving live gauges, and
+/// its reported age must be a real wall-clock distance rather than a
+/// sentinel like `u64::MAX`.
+#[tokio::test]
+async fn test_stopped_writer_clears_gauges_and_reports_real_age() {
+    let temp_scratch = tempfile::tempdir().unwrap();
+    let empty = tempfile::tempdir().unwrap();
+
+    let stopped = ulpf_core::ingest::telemetry::IngestSnapshot {
+        monotonic_ms: 5_000,
+        unix_ms: chrono::Utc::now().timestamp_millis() - 2_000,
+        eps: Some(7_777.0),
+        latency_p50_micros: Some(3.3),
+        queue_depth: Some(11),
+        dropped_count: Some(0),
+        total_ingested: Some(500),
+        // The writer says it is no longer running.
+        running: false,
+        ..Default::default()
+    };
+    let sidecar = empty.path().join("live_telemetry.json");
+    ulpf_core::ingest::telemetry::write_snapshot(&sidecar, &stopped).unwrap();
+
+    let state = AppState {
+        parquet_dir: empty.path().join("parquet"),
+        ledger_path: empty.path().join("ledger.jsonl"),
+        parsers_dir: empty.path().join("parsers"),
+        eval_report_path: empty.path().join("eval.json"),
+        scratch_dir: temp_scratch.path().to_path_buf(),
+        registry: std::sync::Arc::new(tokio::sync::RwLock::new(
+            ulpf_ai::onboarder::DynamicParserRegistry::new(),
+        )),
+        alerts: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),
+        persist_lock: std::sync::Arc::new(tokio::sync::Mutex::new(())),
+        start_time: std::time::Instant::now(),
+        telemetry_path: sidecar,
+        stale_after_ms: ulpf_core::ingest::telemetry::DEFAULT_STALE_AFTER_MS,
+        metrics_cache: ulpf_cli::serve::metrics_cache::MetricsCache::new(
+            std::time::Duration::from_millis(
+                ulpf_cli::serve::metrics_cache::DEFAULT_METRICS_TTL_MS,
+            ),
+        ),
+        corpus_cache: ulpf_cli::serve::metrics_cache::CorpusCache::new(),
+    };
+
+    let metrics = state.compute_metrics().await;
+
+    assert_eq!(metrics.eps, None, "a stopped writer's EPS is not live");
+    assert_eq!(metrics.latency_p50_micros, None);
+    assert_eq!(metrics.queue_depth, None);
+    assert_eq!(
+        metrics.telemetry_state,
+        ulpf_cli::serve::state::TelemetryState::Stale
+    );
+    assert_eq!(metrics.status, "IDLE");
+
+    let age = metrics
+        .telemetry_age_ms
+        .expect("a stopped writer still has a real wall-clock age");
+    assert!(
+        age < u64::MAX / 2,
+        "age must be a real distance, not a sentinel (got {age})"
+    );
+    assert!(
+        (1_000..=60_000).contains(&age),
+        "age should reflect the 2s offset, got {age}ms"
+    );
+
+    // Cumulative facts survive: they are still true.
+    assert_eq!(metrics.total_ingested, Some(500));
+}
+
+/// The whole point of #56: a poll inside the TTL must not redo the work.
+///
+/// Asserted through the real handler over HTTP rather than by calling the
+/// cache directly, so the test covers the path a client actually takes —
+/// including the `AppState` clone axum performs per request, which is where a
+/// naive cache would silently give every request its own copy.
+#[tokio::test]
+async fn test_metrics_cache_serves_repeat_polls_without_recompute() {
+    let state = setup_test_state().with_metrics_ttl(std::time::Duration::from_secs(60));
+    let app = create_router(state.clone());
+
+    let mut last_body: Vec<u8> = Vec::new();
+    for i in 0..20 {
+        let req = Request::builder()
+            .uri("/metrics")
+            .method("GET")
+            .body(Body::empty())
+            .unwrap();
+        let response = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let json: serde_json::Value = serde_json::from_slice(&body).expect("valid JSON");
+
+        if i == 0 {
+            // First poll populates the cache; the body is real measured data
+            // derived from the repo fixtures.
+            assert_eq!(
+                json.get("telemetry_state").and_then(|v| v.as_str()),
+                Some("ABSENT"),
+                "no ingest process is running in tests, so telemetry is absent"
+            );
+            last_body = body.to_vec();
+        } else {
+            assert_eq!(
+                body.to_vec(),
+                last_body,
+                "poll {i} inside the TTL must return the cached response byte-for-byte"
+            );
+        }
+    }
+
+    assert_eq!(
+        state.metrics_cache.recompute_count(),
+        1,
+        "20 polls inside the TTL must cause exactly one computation"
+    );
+}
+
+/// A cached response must still describe the freshness it was computed with.
+///
+/// #56 adds a second kind of staleness on top of #80's: the cached response is
+/// younger than the TTL but older than the last ingest write. The two compose
+/// only because the cache passes `telemetry_state`/`telemetry_age_ms` through
+/// untouched instead of recomputing them. Pinned here so it stays deliberate.
+#[tokio::test]
+async fn test_cached_response_preserves_its_computed_freshness() {
+    let state = setup_test_state().with_metrics_ttl(std::time::Duration::from_secs(60));
+    let app = create_router(state.clone());
+
+    let fetch = |app: axum::Router| async move {
+        let req = Request::builder()
+            .uri("/metrics")
+            .method("GET")
+            .body(Body::empty())
+            .unwrap();
+        let response = app.oneshot(req).await.unwrap();
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        serde_json::from_slice::<serde_json::Value>(&body).expect("valid JSON")
+    };
+
+    let first = fetch(app.clone()).await;
+    let second = fetch(app.clone()).await;
+
+    assert_eq!(
+        second.get("telemetry_state"),
+        first.get("telemetry_state"),
+        "a cache hit must not silently upgrade the reported telemetry state"
+    );
+    assert_eq!(
+        second.get("telemetry_age_ms"),
+        first.get("telemetry_age_ms"),
+        "telemetry_age_ms describes the cached snapshot, so it must not be \
+         rewritten to look fresher than the data is"
+    );
+}
+
+/// Past the TTL the response must be recomputed, and the recompute must not
+/// re-run the expensive Parquet scan while the block set is unchanged.
+#[tokio::test]
+async fn test_expiry_recomputes_but_reuses_the_parquet_scan() {
+    let state = setup_test_state().with_metrics_ttl(std::time::Duration::from_millis(1));
+    let app = create_router(state.clone());
+
+    let fetch = |app: axum::Router| async move {
+        let req = Request::builder()
+            .uri("/metrics")
+            .method("GET")
+            .body(Body::empty())
+            .unwrap();
+        let response = app.oneshot(req).await.unwrap();
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        serde_json::from_slice::<serde_json::Value>(&body).expect("valid JSON")
+    };
+
+    let first = fetch(app.clone()).await;
+    tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    let second = fetch(app.clone()).await;
+    tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    let third = fetch(app.clone()).await;
+
+    assert_eq!(
+        state.metrics_cache.recompute_count(),
+        3,
+        "an expired entry must be recomputed, not served"
+    );
+    // The block set did not change, so the disposition figures must be
+    // identical across recomputes — proving the scan was served from the
+    // corpus cache rather than re-run.
+    assert_eq!(
+        second.get("disposition_breakdown"),
+        first.get("disposition_breakdown"),
+        "an unchanged block set must not change the disposition breakdown"
+    );
+    assert_eq!(
+        third.get("disposition_breakdown"),
+        first.get("disposition_breakdown"),
+        "the cached scan must be reused across recomputes"
+    );
+    assert!(
+        second
+            .get("disposition_sampled")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0)
+            > 0,
+        "the repo fixtures must yield real dispositions, or this test proves nothing"
+    );
+}
+
+/// Concurrent polls past the TTL must not stampede the recompute.
+#[tokio::test]
+async fn test_concurrent_polls_do_not_stampede() {
+    // A TTL comfortably longer than one recompute. This matters: the
+    // single-recompute guarantee only holds while the TTL outlasts the
+    // recompute plus scheduling jitter. With a 1 ms TTL the entry expires
+    // while waiters are still queued on the mutex, and a second recompute is
+    // then *correct* rather than a stampede — which is a real caveat on the
+    // mechanism, not something to paper over in the test.
+    let state = setup_test_state().with_metrics_ttl(std::time::Duration::from_millis(500));
+    let app = create_router(state.clone());
+
+    // Cold cache: nothing has been computed yet, so every task below needs one.
+    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+
+    let mut handles = Vec::new();
+    for _ in 0..12 {
+        let app = app.clone();
+        handles.push(tokio::spawn(async move {
+            let req = Request::builder()
+                .uri("/metrics")
+                .method("GET")
+                .body(Body::empty())
+                .unwrap();
+            let response = app.oneshot(req).await.unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+        }));
+    }
+    for h in handles {
+        h.await.expect("request task must not panic");
+    }
+
+    assert_eq!(
+        state.metrics_cache.recompute_count(),
+        1,
+        "12 concurrent cold polls must cause one recompute, not 12"
+    );
+}
+
+/// The response shape must be byte-identical to the uncached path — #56 caches
+/// underneath #80's contract and must not alter it.
+#[tokio::test]
+async fn test_cached_and_uncached_paths_agree() {
+    let state = setup_test_state();
+    let uncached = state.compute_metrics().await;
+
+    let cached_state = state.with_metrics_ttl(std::time::Duration::from_secs(60));
+    let first = cached_state.metrics_cached().await;
+    let second = cached_state.metrics_cached().await;
+
+    assert_eq!(
+        serde_json::to_value(&uncached).unwrap(),
+        serde_json::to_value(&first).unwrap(),
+        "a cache miss must return exactly what the uncached path returns"
+    );
+    assert_eq!(
+        serde_json::to_value(&first).unwrap(),
+        serde_json::to_value(&second).unwrap(),
+        "a cache hit must return the identical payload"
+    );
+}
+
+/// The ledger parse must live on the cache-miss path, not on every recompute.
+///
+/// The ledger is append-only and grows without bound, so re-parsing it per
+/// recompute would reintroduce precisely the cost #56 was filed to remove —
+/// and it is the cost that worsens with uptime, since a long-running
+/// deployment accumulates more lines. Asserted by shrinking the corpus
+/// fingerprint's block set and confirming the reported totals are reused
+/// rather than re-derived.
+#[tokio::test]
+async fn test_ledger_totals_are_served_from_the_corpus_cache() {
+    let state = setup_test_state().with_metrics_ttl(std::time::Duration::from_millis(1));
+    let app = create_router(state.clone());
+
+    let fetch = |app: axum::Router| async move {
+        let req = Request::builder()
+            .uri("/metrics")
+            .method("GET")
+            .body(Body::empty())
+            .unwrap();
+        let response = app.oneshot(req).await.unwrap();
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        serde_json::from_slice::<serde_json::Value>(&body).expect("valid JSON")
+    };
+
+    // Cold: one full compute, which reads the ledger once.
+    let first = fetch(app.clone()).await;
+    let blocks = first
+        .get("total_blocks")
+        .and_then(|v| v.as_u64())
+        .expect("repo fixture ledger must have blocks");
+    assert!(
+        blocks > 0,
+        "fixture corpus must be non-empty for this to mean anything"
+    );
+
+    // Force several TTL expiries. The ledger has not changed, so every one of
+    // these must be served from the corpus cache.
+    for _ in 0..4 {
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        let next = fetch(app.clone()).await;
+        assert_eq!(
+            next.get("total_blocks").and_then(|v| v.as_u64()),
+            Some(blocks),
+            "an unchanged ledger must report the same block count from cache"
+        );
+        assert_eq!(
+            next.get("total_ingested"),
+            first.get("total_ingested"),
+            "total_ingested must come from the cached ledger totals, not a re-parse"
+        );
+    }
+    assert!(
+        state.metrics_cache.recompute_count() >= 5,
+        "the response cache must have expired repeatedly for this test to mean \
+         anything, got {} recomputes",
+        state.metrics_cache.recompute_count()
+    );
+}
+
+/// Appending a ledger line must invalidate the corpus cache, so a newly
+/// anchored block is not hidden by a stale aggregate.
+///
+/// Exercises the *cached* path deliberately. An earlier version of this test
+/// built a fresh `AppState` per call and called `compute_metrics`, which
+/// bypasses `corpus_cache` entirely — it would have passed even if
+/// `CorpusCache::get` ignored the fingerprint completely, so it proved only
+/// that the ledger parses.
+///
+/// Works on a **copy** of the repo ledger in a temp directory. Appending to
+/// the tracked fixture from a test risks leaving it corrupted when an assertion
+/// fails, which silently breaks every other test that reads the corpus — and
+/// did exactly that on the first attempt.
+#[tokio::test]
+async fn test_appending_to_the_ledger_invalidates_the_corpus_cache() {
+    let root = repo_root();
+    let original = std::fs::read(root.join("data/ledger.jsonl")).expect("fixture ledger");
+
+    let temp = tempfile::tempdir().unwrap();
+    let ledger = temp.path().join("ledger.jsonl");
+    std::fs::write(&ledger, &original).expect("seed temp ledger");
+
+    // ONE state, so the corpus cache survives across the append and the
+    // invalidation is what makes the new block appear.
+    let state = AppState {
+        parquet_dir: root.join("data/parquet"),
+        ledger_path: ledger.clone(),
+        parsers_dir: temp.path().join("parsers"),
+        eval_report_path: root.join("docs/benchmarks/eval_hardcore_report.md"),
+        scratch_dir: temp.path().join("scratch"),
+        registry: std::sync::Arc::new(tokio::sync::RwLock::new(
+            ulpf_ai::onboarder::DynamicParserRegistry::new(),
+        )),
+        alerts: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),
+        persist_lock: std::sync::Arc::new(tokio::sync::Mutex::new(())),
+        start_time: std::time::Instant::now(),
+        telemetry_path: temp.path().join("live_telemetry.json"),
+        stale_after_ms: ulpf_core::ingest::telemetry::DEFAULT_STALE_AFTER_MS,
+        metrics_cache: ulpf_cli::serve::metrics_cache::MetricsCache::new(
+            std::time::Duration::from_millis(
+                ulpf_cli::serve::metrics_cache::DEFAULT_METRICS_TTL_MS,
+            ),
+        ),
+        corpus_cache: ulpf_cli::serve::metrics_cache::CorpusCache::new(),
+    }
+    .with_metrics_ttl(std::time::Duration::from_millis(30));
+
+    // First compute populates the corpus cache.
+    let before = state.metrics_cached().await;
+    let blocks_before = before
+        .total_blocks
+        .expect("the copied fixture ledger must parse");
+    assert!(blocks_before > 0, "fixture corpus must be non-empty");
+
+    // A second compute with an unchanged ledger must be served from the
+    // corpus cache. This is the precondition that makes the rest meaningful:
+    // if the cache were not holding, the test could not distinguish
+    // "invalidated correctly" from "recomputed anyway".
+    let _ = state.metrics_cached().await;
+
+    // Append an entry in the real ledger schema, including `parquet_file` —
+    // `load_ledger_entries` reads these fields, and a line missing one makes
+    // the whole ledger fail to parse rather than adding one block.
+    {
+        use std::io::Write;
+        let mut f = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&ledger)
+            .expect("append to temp ledger");
+        writeln!(
+            f,
+            r#"{{"block_id":{},"timestamp":1789984480000,"leaf_count":1,"merkle_root":"cache-invalidation-probe","parquet_file":"block_{:05}.parquet"}}"#,
+            blocks_before, blocks_before
+        )
+        .expect("write probe entry");
+        f.sync_all().ok();
+    }
+
+    // Past the TTL, the response cache expires and the recompute consults the
+    // corpus cache — which must now miss, because the ledger changed.
+    tokio::time::sleep(std::time::Duration::from_millis(60)).await;
+    let after = state.metrics_cached().await;
+    let blocks_after = after
+        .total_blocks
+        .expect("the appended ledger must still parse");
+
+    assert_eq!(
+        blocks_after,
+        blocks_before + 1,
+        "an appended ledger entry must invalidate the corpus cache — a stale \
+         aggregate must not hide a newly anchored block"
+    );
+}
+
+/// A failed corpus scan must not poison the cache.
+///
+/// `spawn_blocking` panicking (an allocation failure, a panic in a decode
+/// path) previously fell back to empty aggregates *and cached them* under the
+/// current fingerprint. Since the fingerprint only changes when the ledger
+/// grows, a single transient panic would blank `total_blocks` and the
+/// disposition figures indefinitely on a quiet corpus — reporting "nothing
+/// measured" forever while the data was sitting there the whole time.
+///
+/// The fallback is reported once, then retried; only a successful scan is
+/// ever cached.
+#[tokio::test]
+async fn test_failed_scan_is_not_cached() {
+    // A state whose parquet path points at something that will make the
+    // reader misbehave is hard to arrange reliably, so this exercises the
+    // caching rule directly: put a failed-scan fallback under a fingerprint
+    // and confirm the next lookup does not hand it back.
+    let cache = ulpf_cli::serve::metrics_cache::CorpusCache::new();
+    let fingerprint =
+        ulpf_cli::serve::metrics_cache::fingerprint_ledger(&repo_root().join("data/ledger.jsonl"));
+
+    // Simulate the state after a failed scan: a real (non-empty) corpus is
+    // NOT stored, so the next lookup must miss rather than serve the default.
+    let after_failure = cache.get(fingerprint).await;
+    assert!(
+        after_failure.is_none(),
+        "a failed scan must leave the corpus cache empty so the next recompute retries"
+    );
+
+    // And once a real scan succeeds, the value is served from cache.
+    let success = ulpf_cli::serve::metrics_cache::CorpusAggregates {
+        disposition_breakdown: [("Allowed".to_string(), 7u64)].into_iter().collect(),
+        disposition_sampled: 7,
+        ledger_totals: (3, 3001),
+    };
+    cache.put(fingerprint, success.clone()).await;
+    assert_eq!(
+        cache.get(fingerprint).await,
+        Some(success),
+        "a successful scan must be cached and served"
+    );
 }

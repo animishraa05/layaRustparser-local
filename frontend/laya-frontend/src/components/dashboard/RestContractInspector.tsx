@@ -13,13 +13,17 @@ export function RestContractInspector({ metrics, status = "OFFLINE" }: RestContr
   const [copied, setCopied] = useState(false);
 
   const handleCopy = () => {
-    navigator.clipboard.writeText("curl -s http://127.0.0.1:8080/metrics");
+    const origin = typeof window !== "undefined" ? window.location.origin : "http://127.0.0.1:8080";
+    navigator.clipboard.writeText(`curl -s ${origin}/metrics`);
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
   };
 
   return (
-    <div className="flex flex-col bg-white p-4 rounded-xl border border-[#E2E8F0] shadow-sm justify-between">
+    <div
+      data-tour="contract-inspector"
+      className="flex flex-col bg-white p-4 rounded-xl border border-[#E2E8F0] shadow-sm justify-between"
+    >
       <div className="flex items-center justify-between pb-2">
         <div className="flex items-center gap-2">
           <Terminal className="w-4 h-4 text-[#0284C7]" />
@@ -70,7 +74,7 @@ export function RestContractInspector({ metrics, status = "OFFLINE" }: RestContr
         {!metrics || status === "OFFLINE" ? (
           <div className="py-8 px-4 text-center font-mono text-[0.75rem] text-[#94A3B8]">
             <p className="text-[#FFB4AB] font-semibold mb-1">Metrics unavailable</p>
-            <p className="text-[#828589]">Backend is not responding on http://127.0.0.1:8080/metrics</p>
+            <p className="text-[#828589]">Backend is not responding on /metrics</p>
           </div>
         ) : (
           <pre className="leading-relaxed text-[0.75rem]">

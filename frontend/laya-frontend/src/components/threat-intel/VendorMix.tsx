@@ -84,7 +84,7 @@ export function VendorMix({ metrics }: VendorMixProps) {
         {!isAvailable ? (
           <div className="p-8 text-center text-[#64748B] font-mono text-[0.875rem] bg-[#F8FAFC] rounded-lg border border-dashed border-[#CBD5E1] my-4">
             <p className="text-amber-800 font-semibold mb-1">Metrics unavailable</p>
-            <p className="text-[#64748B] text-[0.75rem]">Backend is not responding on http://127.0.0.1:8080/metrics</p>
+            <p className="text-[#64748B] text-[0.75rem]">Backend is not responding on /metrics</p>
           </div>
         ) : (
           <div className="flex flex-col gap-4 mt-2">

@@ -309,7 +309,7 @@ export default function QueryExplorerPage() {
               ) : (
                 <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded font-mono text-xs font-bold bg-[#10B981]/10 text-[#10B981] border border-[#10B981]/30">
                   <span className="w-2 h-2 rounded-full bg-[#10B981] animate-pulse" />
-                  LIVE (8080)
+                  LIVE API
                 </span>
               )}
             </div>
@@ -355,7 +355,7 @@ export default function QueryExplorerPage() {
                   </span>
                 </div>
                 <p className="text-xs text-amber-700 mt-0.5">
-                  The Rust backend at 127.0.0.1:8080 is unreachable. Displaying cached {records.length} records and {blocks.length} ledger blocks for offline reference. Actions requiring backend connectivity (live queries, proofs, exports) are paused.
+                  The Rust backend is unreachable. Displaying cached {records.length} records and {blocks.length} ledger blocks for offline reference. Actions requiring backend connectivity (live queries, proofs, exports) are paused.
                 </p>
               </div>
             </div>

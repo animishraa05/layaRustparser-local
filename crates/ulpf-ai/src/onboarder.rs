@@ -13,6 +13,14 @@ use ulpf_core::schema::ocsf::{
     activity_id, disposition, ConnectionInfo, Endpoint, Metadata, NetworkActivity, Product,
 };
 
+/// Schema version stamped on every synthesized parser definition.
+///
+/// Bumped whenever the `ParserDefinition` serialization shape changes so
+/// loaders can distinguish current files from legacy ones. Deserialization
+/// defaults a missing field to 0 (see the `#[serde(default)]` on
+/// [`ParserDefinition::schema_version`]), so parsers published before this
+/// field existed keep loading — they just report version 0.
+pub const PARSER_SCHEMA_VERSION: u32 = 1;
 /// Result of automated sandbox validation on synthesized parser
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ValidationReport {
@@ -55,6 +63,13 @@ pub struct ParserDefinition {
     pub sample_logs: Vec<String>,
     pub confidence_score: f64,
     pub created_at: i64,
+    /// Schema version of this definition. `#[serde(default)]` (→ 0 when
+    /// absent) is load-bearing, not laziness: `from_yaml` rejects missing
+    /// fields, so without the default every parser file published before this
+    /// field existed would stop loading. New files are stamped
+    /// [`PARSER_SCHEMA_VERSION`]; legacy files report 0.
+    #[serde(default)]
+    pub schema_version: u32,
     #[serde(skip)]
     pub regex_cache: Arc<OnceLock<Result<Regex, regex::Error>>>,
 }
@@ -69,6 +84,7 @@ impl Clone for ParserDefinition {
             sample_logs: self.sample_logs.clone(),
             confidence_score: self.confidence_score,
             created_at: self.created_at,
+            schema_version: self.schema_version,
             // A FRESH cell, deliberately: `regex_pattern` is public, so a clone
             // may re-pattern itself. Sharing the cell would leave the clone
             // silently parsing with the ORIGINAL pattern, disagreeing with the
@@ -396,6 +412,7 @@ impl Onboarder {
             sample_logs: samples.iter().map(|s| s.to_string()).collect(),
             confidence_score: 1.0,
             created_at: Utc::now().timestamp_millis(),
+            schema_version: PARSER_SCHEMA_VERSION,
             regex_cache: Arc::new(OnceLock::new()),
         };
         let report = Self::validate_parser(&parser_def, samples)?;
@@ -548,6 +565,28 @@ impl Onboarder {
     fn synthesize_regex(samples: &[&str]) -> Result<String> {
         let first = samples[0];
 
+        // Case 0: ArcSight CEF — checked FIRST, before the flow-arrow branch.
+        // A CEF extension block can legally contain `->` or the word
+        // `session`, either of which would route the sample into
+        // `synthesize_flow_regex` and build a pattern around the wrong
+        // anchor (the KV branch would also misfire on `src=` while missing
+        // the CEF-short `spt=`/`dpt=` port keys entirely).
+        if first.contains("CEF:") {
+            return Self::synthesize_cef_regex(samples);
+        }
+
+        // Case 0b: JSON / Suricata EVE — a trimmed leading `{` is unambiguous
+        // (no other branch handles it; today these fall through to the
+        // positional tokenizer, which shreds them on whitespace). Tried
+        // before the flow-arrow branch: an EVE `signature` string can legally
+        // contain `->`. A sample that merely starts with `{` but is not valid
+        // JSON falls through to the branches below.
+        if first.trim_start().starts_with('{') {
+            if let Ok(pattern) = Self::synthesize_json_regex(samples) {
+                return Ok(pattern);
+            }
+        }
+
         // Case 1: Check for Juniper SRX / Directional Flow format: `IP/PORT->IP/PORT` or `IP:PORT -> IP:PORT`
         if first.contains("->")
             || first.contains("session created")
@@ -563,6 +602,267 @@ impl Onboarder {
 
         // Case 3: Token Positional / Freeform format
         Self::synthesize_positional_regex(samples)
+    }
+
+    /// Synthesize regex for ArcSight CEF (`CEF:v|vendor|product|version|sig|name|sev|ext`).
+    ///
+    /// Over-match guards (a CEF pattern must never fire on other vendors'
+    /// traffic — see the cross-vendor sweep test):
+    /// - the `CEF:\d+|` header anchor is mandatory, not optional;
+    /// - every extension key is prefixed with `\b` (`src=` must not match
+    ///   inside `srcintf=` or `srcip=`);
+    /// - `act=` is a mandatory clause whenever sample 1 carries it, and
+    ///   `src=`/`dst=` are always mandatory — without endpoints the sandbox
+    ///   validator rejects the pattern anyway, so fail loudly here instead.
+    ///
+    /// The action group reuses the `action` capture name so
+    /// `parse_with_regex` maps it with no runtime change.
+    fn synthesize_cef_regex(samples: &[&str]) -> Result<String> {
+        let first = samples[0];
+
+        // CEF-short extension keys in first-sample offset order. The KV
+        // branch only knows `sport=`/`srcport=`/`dport=` and misses `spt=`
+        // and `dpt=` entirely — which is why CEF gets its own synthesizer.
+        let key_patterns = vec![
+            (
+                "action",
+                static_re(r"\bact=")?,
+                // CEF verbs carry hyphens (`client-rst`); tolerate the
+                // quoted FortiGate form the same way the KV branch does.
+                r#"(?:act)="?(?P<action>[a-zA-Z0-9_-]+)"?"#,
+            ),
+            (
+                "src_ip",
+                static_re(r"\bsrc=")?,
+                r"(?:src)=(?P<src_ip>[0-9a-fA-F.:%]+)",
+            ),
+            (
+                "src_port",
+                static_re(r"\bspt=")?,
+                r"(?:spt)=(?P<src_port>\d{1,5})",
+            ),
+            (
+                "dst_ip",
+                static_re(r"\bdst=")?,
+                r"(?:dst)=(?P<dst_ip>[0-9a-fA-F.:%]+)",
+            ),
+            (
+                "dst_port",
+                static_re(r"\bdpt=")?,
+                r"(?:dpt)=(?P<dst_port>\d{1,5})",
+            ),
+            (
+                "protocol",
+                static_re(r"\bproto=")?,
+                r"(?:proto)=(?P<protocol>[a-zA-Z0-9]+)",
+            ),
+        ];
+
+        let mut ordered_patterns: Vec<(usize, &str, &str)> = Vec::new();
+        for (name, re, capture_pat) in &key_patterns {
+            if let Some(m) = re.find(first) {
+                ordered_patterns.push((m.start(), name, capture_pat));
+            }
+        }
+        ordered_patterns.sort_by_key(|k| k.0);
+
+        // Endpoints are non-negotiable: a pattern without `src_ip`/`dst_ip`
+        // captures can never pass the sandbox validator, so say so now with
+        // the sample attached instead of failing validation opaquely later.
+        for required in ["src_ip", "dst_ip"] {
+            if !ordered_patterns.iter().any(|(_, n, _)| *n == required) {
+                return Err(anyhow!(
+                    "No CEF endpoint key for '{required}' in sample: '{first}'"
+                ));
+            }
+        }
+        if ordered_patterns.is_empty() {
+            return Err(anyhow!(
+                "No recognizable CEF extension keys found in sample"
+            ));
+        }
+
+        // Seven `|`-separated header fields; `[^|]*` per field so an empty
+        // field (or a `dvchost` tail) never breaks the anchor. Header names
+        // are `cef_`-prefixed: unknown to `parse_with_regex`, so they land
+        // in `unmapped` as provenance instead of colliding with endpoints.
+        let mut regex_str = String::from(
+            r"^.*?CEF:(?P<cef_version>\d+)\|(?P<cef_vendor>[^|]*)\|(?P<cef_product>[^|]*)\|(?P<cef_device_version>[^|]*)\|(?P<cef_sig_id>[^|]*)\|(?P<cef_name>[^|]*)\|(?P<cef_severity>[^|]*)\|",
+        );
+        for (_, _, pat) in ordered_patterns {
+            regex_str.push_str(r".*?\b");
+            regex_str.push_str(pat);
+        }
+        regex_str.push_str(".*$");
+
+        Ok(regex_str)
+    }
+
+    /// Synthesize regex for JSON log lines (Suricata EVE-JSON shape).
+    ///
+    /// Option A: parse the samples with `serde_json` (already a direct
+    /// dependency — nothing new), flatten each document to key paths, and
+    /// emit ONE regex anchored at `^\s*\{` whose clauses are
+    /// `regex::escape`'d literal keys joined by `.*?`. There is deliberately
+    /// NO hand-regexed JSON grammar here: quoting, nesting, and key order
+    /// are handled by matching literal keys, not by parsing JSON with regex.
+    ///
+    /// Clause order follows the keys' offsets in the first sample's raw text
+    /// (`serde_json::Map` is alphabetically ordered without `preserve_order`,
+    /// so document order is read off the raw string, KV-branch style). A key
+    /// path present in EVERY sample becomes a mandatory clause; a path seen
+    /// only in some (e.g. `alert.action`, absent from EVE `flow`/`dns`
+    /// records) becomes `(?:...)?` — otherwise a mixed-type training set
+    /// could never validate. The value class follows the observed JSON type:
+    /// strings match quoted, numbers bare, mixed either.
+    fn synthesize_json_regex(samples: &[&str]) -> Result<String> {
+        let first = samples[0];
+        let first_val: serde_json::Value = serde_json::from_str(first)
+            .with_context(|| "First sample is not valid JSON".to_string())?;
+
+        // All samples must be JSON documents; a non-JSON sample means this
+        // branch was mis-dispatched (caller falls through on our Err).
+        let mut parsed: Vec<serde_json::Value> = Vec::with_capacity(samples.len());
+        for s in samples {
+            parsed.push(
+                serde_json::from_str(s)
+                    .with_context(|| "JSON synthesizer requires all samples to be JSON")?,
+            );
+        }
+
+        // Flatten the first document to scalar key paths (objects only;
+        // arrays carry no endpoint material and are skipped).
+        let mut leaves: Vec<Vec<String>> = Vec::new();
+        Self::flatten_json_leaves(&first_val, &mut Vec::new(), &mut leaves);
+
+        // Keep only leaves that alias to a canonical endpoint/action name,
+        // in first-sample raw-text offset order.
+        let mut ordered: Vec<(usize, Vec<String>, &'static str)> = Vec::new();
+        for path in &leaves {
+            let leaf = &path[path.len() - 1];
+            if let Some(canonical) = json_alias(leaf) {
+                // Offset of the leaf key's quoted literal in the raw sample.
+                let needle = format!("\"{leaf}\"");
+                if let Some(off) = first.find(&needle) {
+                    ordered.push((off, path.clone(), canonical));
+                }
+            }
+        }
+        ordered.sort_by_key(|k| k.0);
+        if ordered.is_empty() {
+            return Err(anyhow!("No endpoint/action keys found in JSON sample"));
+        }
+
+        // Unique capture names under the same budget rule as the positional
+        // synthesizer: the first claimant takes the canonical name, a repeat
+        // (e.g. top-level `action` plus nested `alert.action`) takes the
+        // `parent_canonical` suffix, a third degrades to non-capturing.
+        let mut taken: HashSet<String> = HashSet::new();
+        let mut resolve_name = |canonical: &'static str, parent: Option<&str>| -> Option<String> {
+            if taken.insert(canonical.to_string()) {
+                return Some(canonical.to_string());
+            }
+            if let Some(p) = parent {
+                let clean: String = p.chars().filter(|c| c.is_alphanumeric()).collect();
+                let suffixed = format!("{clean}_{canonical}");
+                if taken.insert(suffixed.clone()) {
+                    return Some(suffixed);
+                }
+            }
+            None
+        };
+
+        let mut regex_str = String::from(r"^\s*\{");
+        for (_, path, canonical) in ordered {
+            let leaf = &path[path.len() - 1];
+            let parent = if path.len() > 1 {
+                Some(path[path.len() - 2].as_str())
+            } else {
+                None
+            };
+
+            // Presence + value class across ALL samples: unanimous paths are
+            // mandatory clauses, partial paths `(?:...)?` — a mixed-type
+            // training set (alert/flow/dns) could never validate otherwise.
+            let mut present = 0;
+            let mut saw_str = false;
+            let mut saw_num = false;
+            for v in &parsed {
+                if let Some((is_str, is_num)) = json_path_scalar(v, &path) {
+                    present += 1;
+                    saw_str |= is_str;
+                    saw_num |= is_num;
+                }
+            }
+            if present == 0 {
+                continue;
+            }
+            let mandatory = present == parsed.len();
+
+            let value_pat = match canonical {
+                "src_ip" | "dst_ip" => r#"[^"]+"#,
+                "src_port" | "dst_port" => r"\d{1,5}",
+                "protocol" => r"[A-Za-z0-9]+",
+                _ => r"[A-Za-z0-9_-]+", // action
+            };
+            let key_lit = regex::escape(leaf);
+            let inner = match resolve_name(canonical, parent) {
+                Some(name) => format!("(?P<{name}>{value_pat})"),
+                None => format!("(?:{value_pat})"),
+            };
+            let clause = if saw_str && !saw_num {
+                format!(r#""{key_lit}"\s*:\s*"{inner}""#)
+            } else if saw_num && !saw_str {
+                // Numeric endpoints are bare in EVE (`"src_port": 56529`).
+                format!(r#""{key_lit}"\s*:\s*{inner}"#)
+            } else {
+                format!(r#""{key_lit}"\s*:\s*"?{inner}"?"#)
+            };
+            // A nested path (`alert.action`) scopes the leaf inside its
+            // parent object; `[^}]*?` (not `.*?`) keeps the join from
+            // spilling past the parent's closing brace.
+            let scoped = if let Some(p) = parent {
+                let parent_lit = regex::escape(p);
+                format!(r#""{parent_lit}"\s*:\s*\{{[^}}]*?{clause}"#)
+            } else {
+                clause
+            };
+            if mandatory {
+                regex_str.push_str(".*?");
+                regex_str.push_str(&scoped);
+            } else {
+                regex_str.push_str("(?:.*?");
+                regex_str.push_str(&scoped);
+                regex_str.push_str(")?");
+            }
+        }
+        regex_str.push_str(".*$");
+
+        // The pattern must actually compile — `resolve_name` keeps names
+        // unique, but prove it here rather than at validation time.
+        static_re(&regex_str)?;
+        Ok(regex_str)
+    }
+
+    /// Recursively collect scalar (string/number) key paths of a JSON
+    /// document. Objects are descended; arrays, bools, and nulls are skipped
+    /// — none of them alias to an endpoint or action capture.
+    fn flatten_json_leaves(
+        value: &serde_json::Value,
+        prefix: &mut Vec<String>,
+        out: &mut Vec<Vec<String>>,
+    ) {
+        if let Some(obj) = value.as_object() {
+            for (k, v) in obj {
+                prefix.push(k.clone());
+                if v.is_string() || v.is_number() {
+                    out.push(prefix.clone());
+                } else if v.is_object() {
+                    Self::flatten_json_leaves(v, prefix, out);
+                }
+                prefix.pop();
+            }
+        }
     }
 
     /// Synthesize regex for directional arrow flow formats (e.g. Juniper SRX `IP/PORT->IP/PORT`)
@@ -928,6 +1228,16 @@ impl Onboarder {
         map.insert("reject".to_string(), disposition::BLOCKED.to_string());
         map.insert("drop".to_string(), disposition::DROPPED.to_string());
         map.insert("dropped".to_string(), disposition::DROPPED.to_string());
+        // CEF verbs, mirroring the native CEF extractor's disposition
+        // vocabulary (`cef.rs`): without these a synthesized CEF parser maps
+        // `act=timeout`/`client-rst`/`server-rst`/`close` to UNKNOWN while the
+        // native route reports ALLOWED/CLOSE for the same line.
+        map.insert("allowed".to_string(), disposition::ALLOWED.to_string());
+        map.insert("close".to_string(), disposition::ALLOWED.to_string());
+        map.insert("timeout".to_string(), disposition::ALLOWED.to_string());
+        map.insert("client-rst".to_string(), disposition::ALLOWED.to_string());
+        map.insert("server-rst".to_string(), disposition::ALLOWED.to_string());
+        map.insert("reset".to_string(), disposition::ALLOWED.to_string());
         map
     }
 }
@@ -1120,6 +1430,41 @@ impl Default for DynamicParserRegistry {
     }
 }
 
+/// Alias a JSON leaf key to its canonical capture name.
+///
+/// Covers Suricata EVE spellings (`src_ip`, `dest_ip`, `dest_port`) and the
+/// short forms other JSON emitters use (`srcip`, `dstip`, `dport`, `act`).
+/// Anything unlisted returns `None` and is left out of the pattern.
+fn json_alias(leaf: &str) -> Option<&'static str> {
+    match leaf.to_ascii_lowercase().as_str() {
+        "src_ip" | "srcip" | "source_ip" | "src" => Some("src_ip"),
+        "dest_ip" | "dstip" | "dest" | "dst_ip" | "dst" => Some("dst_ip"),
+        "src_port" | "sport" | "source_port" => Some("src_port"),
+        "dest_port" | "dport" | "destport" | "dst_port" | "dstport" => Some("dst_port"),
+        "proto" | "protocol" | "transport" => Some("protocol"),
+        "action" | "act" => Some("action"),
+        _ => None,
+    }
+}
+
+/// Look up a key path in a JSON document. Returns `Some((is_str, is_num))`
+/// for scalar string/number leaves, `None` when the path is absent (or is
+/// not a scalar — a type change across samples counts as absent, so the
+/// clause degrades to optional rather than trusting one shape).
+fn json_path_scalar(value: &serde_json::Value, path: &[String]) -> Option<(bool, bool)> {
+    let mut cur = value;
+    for seg in path {
+        cur = cur.as_object()?.get(seg)?;
+    }
+    if cur.is_string() {
+        Some((true, false))
+    } else if cur.is_number() {
+        Some((false, true))
+    } else {
+        None
+    }
+}
+
 /// Helper to convert protocol name to IANA protocol number
 fn protocol_num_from_name(name: &str) -> Option<u8> {
     match name.to_ascii_uppercase().as_str() {
@@ -1284,6 +1629,7 @@ mod tests {
                 sample_logs: vec![],
                 confidence_score: 1.0,
                 created_at: 0,
+                schema_version: 0,
                 regex_cache: Arc::new(OnceLock::new()),
             };
             let report = Onboarder::validate_parser(&def, &samples)
@@ -1591,6 +1937,7 @@ mod tests {
             sample_logs: vec![],
             confidence_score: 1.0,
             created_at: 0,
+            schema_version: 0,
             regex_cache: Arc::new(OnceLock::new()),
         };
         let samples = [
@@ -1618,6 +1965,7 @@ mod tests {
             sample_logs: vec![],
             confidence_score: 1.0,
             created_at: 0,
+            schema_version: 0,
             regex_cache: Arc::new(OnceLock::new()),
         };
         let ev = parser.parse("src=2001:db8::1 dst=::443").unwrap();
@@ -1654,6 +2002,7 @@ mod tests {
             sample_logs: vec![],
             confidence_score: 1.0,
             created_at: 0,
+            schema_version: 0,
             regex_cache: Arc::new(OnceLock::new()),
         };
         // First parse compiles + initializes the OnceLock.
@@ -1709,6 +2058,7 @@ mod tests {
             sample_logs: vec![],
             confidence_score: 1.0,
             created_at: 0,
+            schema_version: 0,
             regex_cache: Arc::new(OnceLock::new()),
         };
         // Must not panic — a Result-returning pub fn must surface Err.
@@ -1759,6 +2109,7 @@ mod tests {
             sample_logs: vec!["line one".to_string(), "line two".to_string()],
             confidence_score: 0.95,
             created_at: 1_700_000_000_000,
+            schema_version: 0,
             regex_cache: Arc::new(OnceLock::new()),
         };
         let yaml = parser.to_yaml().unwrap();
@@ -1887,6 +2238,7 @@ mod tests {
             sample_logs: samples.clone(),
             confidence_score: 0.97,
             created_at: 1_700_000_000_000,
+            schema_version: 0,
             regex_cache: Arc::new(OnceLock::new()),
         };
 
@@ -2003,6 +2355,7 @@ mod tests {
             sample_logs: vec![],
             confidence_score: 1.0,
             created_at: 0,
+            schema_version: 0,
             regex_cache: Arc::new(OnceLock::new()),
         };
         // 19/20 = 95% — must pass (old code required 100%).
@@ -2060,6 +2413,7 @@ mod tests {
             sample_logs: vec![],
             confidence_score: 1.0,
             created_at: 0,
+            schema_version: 0,
             regex_cache: Arc::new(OnceLock::new()),
         };
         // 2 of 3 match = 66.7% — must FAIL below the relaxation floor.
@@ -2089,6 +2443,7 @@ mod tests {
             sample_logs: vec![],
             confidence_score: 1.0,
             created_at: 0,
+            schema_version: 0,
             regex_cache: Arc::new(OnceLock::new()),
         };
         assert_eq!(reg.register(dead), "deadvendor:broken");
@@ -2111,6 +2466,7 @@ mod tests {
             sample_logs: vec![],
             confidence_score: 1.0,
             created_at: 0,
+            schema_version: 0,
             regex_cache: Arc::new(OnceLock::new()),
         };
         for i in 0..REGISTRY_CAPACITY {
@@ -2161,6 +2517,7 @@ mod tests {
             sample_logs: vec![],
             confidence_score: 1.0,
             created_at: 0,
+            schema_version: 0,
             regex_cache: Arc::new(OnceLock::new()),
         };
         for empty in [vec![], vec!["", "   ", "\t"]] {
@@ -2221,6 +2578,7 @@ mod tests {
             sample_logs: vec![],
             confidence_score: 1.0,
             created_at: 0,
+            schema_version: 0,
             regex_cache: Arc::new(OnceLock::new()),
         };
         let report = Onboarder::validate_parser(&parser, &samples).unwrap();
@@ -2244,6 +2602,7 @@ mod tests {
             sample_logs: vec![],
             confidence_score: 1.0,
             created_at: 0,
+            schema_version: 0,
             regex_cache: Arc::new(OnceLock::new()),
         };
 
@@ -2278,5 +2637,146 @@ mod tests {
         // Vendor-prefixed lookup stays deterministic (lexicographic first match).
         assert!(reg.parse("vendor", "line 443").is_ok());
         assert_eq!(reg.len(), REGISTRY_CAPACITY);
+    }
+
+    /// New definitions stamp [`PARSER_SCHEMA_VERSION`]; files published before
+    /// the field existed (no `schema_version` key at all) still load — as
+    /// version 0 — instead of failing `from_yaml`'s missing-field rejection.
+    #[test]
+    fn test_schema_version_roundtrip_and_legacy_default() {
+        let parser = ParserDefinition {
+            vendor: "v".into(),
+            device_model: "m".into(),
+            regex_pattern: r"^src=(?P<src_ip>\S+) dst=(?P<dst_ip>\S+)$".to_string(),
+            action_mappings: HashMap::new(),
+            sample_logs: vec![],
+            confidence_score: 1.0,
+            created_at: 0,
+            schema_version: PARSER_SCHEMA_VERSION,
+            regex_cache: Arc::new(OnceLock::new()),
+        };
+        assert_eq!(PARSER_SCHEMA_VERSION, 1);
+        let from_json = ParserDefinition::from_json(&parser.to_json().unwrap()).unwrap();
+        assert_eq!(from_json.schema_version, PARSER_SCHEMA_VERSION);
+        let from_yaml = ParserDefinition::from_yaml(&parser.to_yaml().unwrap()).unwrap();
+        assert_eq!(from_yaml.schema_version, PARSER_SCHEMA_VERSION);
+
+        // A legacy file carries every field EXCEPT schema_version.
+        let legacy_yaml = concat!(
+            "vendor: \"V\"\n",
+            "device_model: \"M\"\n",
+            "confidence_score: 1.00\n",
+            "created_at: 1700000000000\n",
+            "regex_pattern: \"^src=(?P<src_ip>[0-9.]+)$\"\n",
+            "action_mappings: {}\n",
+            "sample_logs:\n",
+            "  - \"src=10.0.0.1\"\n",
+        );
+        let legacy =
+            ParserDefinition::from_yaml(legacy_yaml).expect("legacy file must keep loading");
+        assert_eq!(legacy.schema_version, 0, "absent version defaults to 0");
+        assert_eq!(legacy.vendor, "V");
+
+        let legacy_json = r#"{"vendor":"V","device_model":"M","regex_pattern":"^x$",
+            "action_mappings":{},"sample_logs":[],"confidence_score":1.0,"created_at":0}"#;
+        let legacy_j = ParserDefinition::from_json(legacy_json).unwrap();
+        assert_eq!(legacy_j.schema_version, 0);
+    }
+
+    /// CEF synthesis captures endpoints, CEF-short ports, and the hyphenated
+    /// `act=` verb; dispositions come from the CEF vocabulary, not UNKNOWN.
+    #[test]
+    fn test_cef_synthesizer_captures_endpoints_and_action() {
+        let samples = vec![
+            "CEF:0|Fortinet|FortiGate|v7.0.2|0000000019|traffic:forward accept|3|src=192.168.1.146 spt=25297 dst=203.0.113.207 dpt=80 proto=6 act=accept",
+            "CEF:0|Fortinet|FortiGate|v7.0.2|0000000014|traffic:forward server-rst|3|src=192.168.3.14 spt=46909 dst=198.51.100.3 dpt=993 proto=6 act=server-rst",
+            "CEF:0|Fortinet|FortiGate|v7.0.2|0000000012|traffic:forward deny|3|src=192.168.6.68 spt=46825 dst=198.51.100.142 dpt=123 proto=17 act=deny",
+        ];
+        let pattern = Onboarder::synthesize_regex(&samples).unwrap();
+        assert!(
+            pattern.contains(r"CEF:(?P<cef_version>\d+)\|"),
+            "mandatory header anchor missing: {pattern}"
+        );
+        let re = Regex::new(&pattern).expect("synthesized CEF regex must compile");
+        let caps = re.captures(samples[0]).unwrap();
+        assert_eq!(caps.name("src_ip").unwrap().as_str(), "192.168.1.146");
+        assert_eq!(caps.name("src_port").unwrap().as_str(), "25297");
+        assert_eq!(caps.name("dst_ip").unwrap().as_str(), "203.0.113.207");
+        assert_eq!(caps.name("dst_port").unwrap().as_str(), "80");
+        assert_eq!(caps.name("action").unwrap().as_str(), "accept");
+        let caps2 = re.captures(samples[1]).unwrap();
+        assert_eq!(caps2.name("action").unwrap().as_str(), "server-rst");
+
+        let (def, _) = Onboarder::generate_parser("fortinet", "fgt-cef", &samples).unwrap();
+        let ev = def.parse(samples[0]).unwrap();
+        assert_eq!(ev.src_endpoint.ip.as_deref(), Some("192.168.1.146"));
+        assert_eq!(ev.dst_endpoint.port, Some(80));
+        assert_eq!(ev.disposition, disposition::ALLOWED);
+        let ev_deny = def.parse(samples[2]).unwrap();
+        assert_eq!(ev_deny.disposition, disposition::BLOCKED);
+        // CEF-session verbs map to ALLOWED (never UNKNOWN), like the native extractor.
+        let ev_rst = def.parse(samples[1]).unwrap();
+        assert_eq!(ev_rst.disposition, disposition::ALLOWED);
+    }
+
+    /// CEF dispatch wins over flow-arrow: an extension block containing `->`
+    /// must still synthesize a CEF pattern, not a flow pattern.
+    #[test]
+    fn test_cef_dispatch_first_despite_arrow_in_extension() {
+        let samples = vec![
+            "CEF:0|Fortinet|FortiGate|v7.0.2|0000000019|traffic:forward accept|3|src=192.168.1.146 spt=25297 dst=203.0.113.207 dpt=80 proto=6 act=accept msg=a->b",
+            "CEF:0|Fortinet|FortiGate|v7.0.2|0000000014|traffic:forward accept|3|src=192.168.3.14 spt=46909 dst=198.51.100.3 dpt=993 proto=6 act=accept msg=c->d",
+            "CEF:0|Fortinet|FortiGate|v7.0.2|0000000012|traffic:forward accept|3|src=192.168.6.68 spt=46825 dst=198.51.100.142 dpt=123 proto=17 act=accept msg=e->f",
+        ];
+        let pattern = Onboarder::synthesize_regex(&samples).unwrap();
+        assert!(
+            pattern.contains("CEF:"),
+            "CEF must win dispatch over `->`: {pattern}"
+        );
+        let re = Regex::new(&pattern).unwrap();
+        assert_eq!(
+            re.captures(samples[0])
+                .unwrap()
+                .name("src_ip")
+                .unwrap()
+                .as_str(),
+            "192.168.1.146"
+        );
+    }
+
+    /// JSON synthesis over a MIXED-type training set (alert + flow + dns):
+    /// the 5-tuple is mandatory, `alert.action` is optional, and all three
+    /// shapes validate — under 20 samples the gate is strict (100%).
+    #[test]
+    fn test_json_synthesizer_mixed_eve_types_validate() {
+        let samples = vec![
+            r#"{"timestamp": "2026-09-21T14:00:01.3102+0000", "event_type": "alert", "src_ip": "10.0.0.22", "src_port": 56529, "dest_ip": "198.51.100.188", "dest_port": 1521, "proto": "TCP", "alert": {"action": "blocked", "signature_id": 2000419}}"#,
+            r#"{"timestamp": "2026-09-21T14:00:03.2768+0000", "event_type": "flow", "src_ip": "10.0.0.98", "src_port": 28488, "dest_ip": "203.0.113.74", "dest_port": 8080, "proto": "TCP"}"#,
+            r#"{"timestamp": "2026-09-21T14:00:05.1653+0000", "event_type": "dns", "src_ip": "10.0.0.83", "src_port": 39958, "dest_ip": "9.9.9.9", "dest_port": 53, "proto": "UDP"}"#,
+        ];
+        let pattern = Onboarder::synthesize_regex(&samples).unwrap();
+        assert!(
+            pattern.starts_with(r"^\s*\{"),
+            "JSON pattern must anchor at object start: {pattern}"
+        );
+        let (def, report) = Onboarder::generate_parser("suricata", "eve", &samples).unwrap();
+        assert!(
+            report.passed,
+            "mixed EVE types must validate: {:?}",
+            report.errors
+        );
+
+        let ev_alert = def.parse(samples[0]).unwrap();
+        assert_eq!(ev_alert.src_endpoint.ip.as_deref(), Some("10.0.0.22"));
+        assert_eq!(ev_alert.src_endpoint.port, Some(56529));
+        assert_eq!(ev_alert.dst_endpoint.ip.as_deref(), Some("198.51.100.188"));
+        assert_eq!(ev_alert.dst_endpoint.port, Some(1521));
+        assert_eq!(ev_alert.disposition, disposition::BLOCKED);
+
+        // The flow record has no `alert.action` — it still parses, with an
+        // UNKNOWN disposition rather than a match failure.
+        let ev_flow = def.parse(samples[1]).unwrap();
+        assert_eq!(ev_flow.src_endpoint.ip.as_deref(), Some("10.0.0.98"));
+        assert_eq!(ev_flow.dst_endpoint.port, Some(8080));
     }
 }

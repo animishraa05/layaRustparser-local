@@ -8,9 +8,14 @@ import Link from "next/link";
 interface OcsfStreamTableProps {
   records: StoredRecordItem[];
   status?: "LIVE" | "MOCK" | "OFFLINE" | "STALE";
+  demoLoopActive?: boolean;
 }
 
-export function OcsfStreamTable({ records, status = "LIVE" }: OcsfStreamTableProps) {
+export function OcsfStreamTable({
+  records,
+  status = "LIVE",
+  demoLoopActive = false,
+}: OcsfStreamTableProps) {
   const [selectedRecord, setSelectedRecord] = useState<StoredRecordItem | null>(null);
   const [copied, setCopied] = useState(false);
   const isOffline = status === "OFFLINE";
@@ -22,7 +27,10 @@ export function OcsfStreamTable({ records, status = "LIVE" }: OcsfStreamTablePro
   };
 
   return (
-    <div className="flex flex-col bg-white p-4 rounded-xl border border-[#E2E8F0] shadow-sm">
+    <div
+      data-tour="ocsf-table"
+      className="flex flex-col bg-white p-4 rounded-xl border border-[#E2E8F0] shadow-sm"
+    >
       {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-[#F1F5F9]">
         <div className="flex items-center gap-2.5">
@@ -36,7 +44,13 @@ export function OcsfStreamTable({ records, status = "LIVE" }: OcsfStreamTablePro
             </span>
           </div>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2.5">
+          {demoLoopActive && !isOffline && (
+            <span className="inline-flex items-center gap-1.5 font-mono text-[0.75rem] text-[#00875A] font-semibold px-2.5 py-0.5 rounded-full bg-[#E3FCEF] border border-[#ABF5D1]">
+              <span className="w-2 h-2 rounded-full bg-[#00875A] animate-ping" />
+              DEMO AUTO-LOOP ACTIVE
+            </span>
+          )}
           <span className="font-mono text-[0.75rem] text-[#64748B]">
             {isOffline && records.length === 0
               ? "Stream disconnected"
@@ -84,7 +98,7 @@ export function OcsfStreamTable({ records, status = "LIVE" }: OcsfStreamTablePro
                 </td>
               </tr>
             ) : (
-              records.map((rec) => {
+              records.map((rec, index) => {
               const dateStr = new Date(rec.timestamp).toLocaleTimeString("en-US", { timeZone: "UTC" });
               const disposition = rec.ocsf?.disposition || "ALLOWED";
               const isAllowed =
@@ -111,8 +125,13 @@ export function OcsfStreamTable({ records, status = "LIVE" }: OcsfStreamTablePro
 
               return (
                 <tr
-                  key={rec.event_id}
-                  className="hover:bg-[#F0F3FF]/50 transition-colors"
+                  key={`${rec.event_id}-${rec.timestamp}-${index}`}
+                  onClick={() => setSelectedRecord(rec)}
+                  className={`cursor-pointer transition-colors duration-300 ${
+                    index === 0 && demoLoopActive
+                      ? "bg-[#F0FDF4]/90 font-medium"
+                      : "hover:bg-[#F0F3FF]/50"
+                  }`}
                 >
                   <td
                     className="py-3 px-4 font-mono text-[0.75rem] text-[#1E293B] whitespace-nowrap"

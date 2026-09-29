@@ -1,0 +1,135 @@
+name: Deploy to EC2
+
+on:
+  push:
+    branches:
+      - master
+      - main
+    paths-ignore:
+      - '**.md'
+      - '**.png'
+      - '**.pdf'
+      - '**.svg'
+      - 'docs/**'
+      - 'presentation_assets/**'
+      - '.gitignore'
+  workflow_dispatch:
+    inputs:
+      target_env:
+        description: 'Target Deployment Environment'
+        required: false
+        default: 'production'
+
+concurrency:
+  group: deploy-ec2-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    name: Deploy to AWS EC2
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Validate GitHub Secrets Configuration
+        run: |
+          if [ -z "${{ secrets.EC2_HOST }}" ]; then
+            echo "::error::EC2_HOST secret is not configured in repository settings."
+            exit 1
+          fi
+          if [ -z "${{ secrets.EC2_SSH_KEY }}" ]; then
+            echo "::error::EC2_SSH_KEY secret is not configured in repository settings."
+            exit 1
+          fi
+          echo "GitHub Secrets EC2_HOST and EC2_SSH_KEY are present."
+
+      - name: Configure SSH Key & Host Authentication
+        env:
+          RAW_HOST: ${{ secrets.EC2_HOST }}
+          RAW_PORT: ${{ secrets.EC2_PORT }}
+          SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          
+          # Clean and sanitize host and port
+          CLEAN_HOST=$(echo "$RAW_HOST" | sed -e 's|^https*://||' -e 's|/.*$||' -e 's|:[0-9]*$||' | tr -d '[:space:]')
+          CLEAN_PORT="${RAW_PORT:-22}"
+          CLEAN_PORT=$(echo "$CLEAN_PORT" | tr -d '[:space:]')
+          
+          echo "Target SSH Host: $CLEAN_HOST:$CLEAN_PORT"
+          echo "CLEAN_HOST=$CLEAN_HOST" >> "$GITHUB_ENV"
+          echo "CLEAN_PORT=$CLEAN_PORT" >> "$GITHUB_ENV"
+          
+          # Safely write SSH private key via environment variable
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          
+          # Scan host key without failing if network blips; accept-new handles verification
+          ssh-keyscan -p "$CLEAN_PORT" -H "$CLEAN_HOST" >> ~/.ssh/known_hosts 2>/dev/null || true
+          chmod 644 ~/.ssh/known_hosts 2>/dev/null || true
+
+      - name: Trigger Remote Deployment on EC2
+        env:
+          EC2_USER: ${{ secrets.EC2_USER || 'ubuntu' }}
+          APP_DIR: ${{ secrets.APP_DIR || '/home/ubuntu/layaRustparser' }}
+        run: |
+          echo "Connecting to $EC2_USER@$CLEAN_HOST:$CLEAN_PORT..."
+          ssh -i ~/.ssh/id_rsa \
+            -o StrictHostKeyChecking=accept-new \
+            -o ConnectTimeout=15 \
+            -p "$CLEAN_PORT" \
+            "$EC2_USER@$CLEAN_HOST" \
+            "APP_DIR='$APP_DIR' bash -s" << 'REMOTE_SCRIPT'
+            set -euo pipefail
+            
+            echo "=========================================="
+            echo "  ULPF CI/CD Remote Deploy Agent"
+            echo "=========================================="
+            
+            # Setup environment
+            source "$HOME/.cargo/env" 2>/dev/null || true
+            export PATH="$HOME/.cargo/bin:$PATH"
+            
+            # Ensure filesystem utilizes all allocated EBS partition space
+            echo "==> Verifying partition and disk capacity..."
+            sudo growpart /dev/nvme0n1 1 2>/dev/null || sudo growpart /dev/xvda 1 2>/dev/null || true
+            sudo resize2fs /dev/nvme0n1p1 2>/dev/null || sudo resize2fs /dev/xvda1 2>/dev/null || true
+            
+            TARGET_DIR="${APP_DIR:-$HOME/layaRustparser}"
+            if [ ! -d "$TARGET_DIR" ]; then
+              echo "Target directory $TARGET_DIR not found, attempting clone..."
+              git clone https://github.com/guptchar/layaRustparser.git "$TARGET_DIR"
+            fi
+            
+            cd "$TARGET_DIR"
+            echo "==> Working directory: $(pwd)"
+            
+            # Pre-fetch disk guard: ensure at least 1 GB is available before git fetch
+            FREE_KB=$(df -k . | awk 'NR==2 {print $4}')
+            if [ "$FREE_KB" -lt 1048576 ]; then
+              echo "WARNING: Disk space low ($FREE_KB KB free). Purging old build caches..."
+              rm -rf target/debug target/release/incremental target/release/build
+              rm -f serve.log frontend.log ingest.log
+              npm cache clean --force 2>/dev/null || true
+              sudo apt-get clean 2>/dev/null || true
+            fi
+            
+            # Synchronize with upstream remote
+            echo "==> Fetching latest changes..."
+            git fetch --all --prune
+            
+            CURRENT_BRANCH="$(git rev-parse --abbrev-ref HEAD)"
+            if [ "$CURRENT_BRANCH" = "HEAD" ]; then
+              git checkout master || git checkout main
+            fi
+            
+            git reset --hard origin/"$(git rev-parse --abbrev-ref HEAD)"
+            
+            # Execute on-server deployment
+            chmod +x scripts/deploy_ec2.sh
+            ./scripts/deploy_ec2.sh
+          REMOTE_SCRIPT

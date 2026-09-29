@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState, useSyncExternalStore } from "react";
-import { Search, Bell, User, RefreshCw } from "lucide-react";
+import { Search, Bell, User, RefreshCw, Sparkles } from "lucide-react";
+import { startTutorialTour } from "@/components/tutorial/TutorialOverlay";
 import {
   getApiMode,
   setApiMode,
@@ -94,7 +95,10 @@ export function Header({
   };
 
   return (
-    <header className="fixed top-0 left-[250px] right-0 h-16 bg-white/95 backdrop-blur-md border-b border-[#E2E8F0] z-40 px-6 flex items-center justify-between">
+    <header
+      data-tour="header"
+      className="fixed top-0 left-[250px] right-0 h-16 bg-white/95 backdrop-blur-md border-b border-[#E2E8F0] z-40 px-6 flex items-center justify-between"
+    >
       {/* Left: Breadcrumbs & Backend Status */}
       <div className="flex items-center gap-4">
         <nav className="flex items-center gap-1.5 text-[#64748B] font-mono text-[0.75rem] uppercase tracking-wider">
@@ -135,6 +139,16 @@ export function Header({
 
       {/* Right: Actions, Filters, Mode & User */}
       <div className="flex items-center gap-3">
+        {/* Interactive Tutorial Walkthrough Button */}
+        <button
+          onClick={startTutorialTour}
+          title="Start interactive dashboard walkthrough"
+          className="flex items-center gap-1.5 px-3 py-1 rounded text-[0.75rem] font-mono font-semibold transition-all border border-[#0284C7]/30 bg-gradient-to-r from-[#0284C7]/10 via-[#38BDF8]/10 to-[#0284C7]/10 text-[#0284C7] hover:bg-[#0284C7]/20 shadow-sm cursor-pointer"
+        >
+          <Sparkles className="w-3.5 h-3.5 text-[#0284C7] animate-pulse" />
+          <span>Tutorial</span>
+        </button>
+
         {/* Live vs Mock Mode Switcher */}
         <button
           onClick={toggleMode}
@@ -162,11 +176,11 @@ export function Header({
 
           <span>
             {!mounted
-              ? "OFFLINE (8080)"
+              ? "CONNECTING..."
               : mode === "LIVE"
                 ? isLiveActive
-                  ? "LIVE API (8080)"
-                  : "OFFLINE (8080)"
+                  ? "LIVE API"
+                  : "OFFLINE"
                 : "MOCK"}
           </span>
 
