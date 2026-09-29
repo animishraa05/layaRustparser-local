@@ -16,7 +16,7 @@ How the common shippers handle those same three problems, from their own documen
 | **Logstash** (Elastic, JVM) | JVM heap — typically hundreds of MB to GB | hand-written `grok` patterns | none | no: plugin installs pull from the internet |
 | **Fluentd** | Ruby + native C, ~100 MB class | hand-written filter plugins | none | no: `gem install` pulls from the internet |
 | **Splunk Universal Forwarder** | proprietary agent | Splunk CIM, paid license | none | partial: offline package, licensed |
-| **ULPF** (this repo) | single **18.6 MB** static Rust binary | OCSF 1.3, automatic (zero-copy extractors + Drain) | yes: RFC 6962 Merkle root → append-only ledger → Parquet WORM, exit-code audit | yes: zero network calls by design |
+| **ULPF** (this repo) | single **22.8 MB** static Rust binary | OCSF 1.3, automatic (zero-copy extractors + Drain) | yes: RFC 6962 Merkle root → append-only ledger → Parquet WORM, exit-code audit | yes: zero network calls by design |
 
 ULPF answers all three: **Rust zero-copy hot path** (slices `&[u8]`, no per-packet allocation), **RFC 6962 Merkle chaining** (deleting or editing *any* byte of *any* row breaks a verifiable root anchored in an append-only ledger), and **OCSF 1.3 normalization** as the single output schema.
 

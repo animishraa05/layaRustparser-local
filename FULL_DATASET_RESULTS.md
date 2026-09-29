@@ -165,8 +165,7 @@ ulpf ingest --udp 127.0.0.1:5141 --tcp 127.0.0.1:5142 \
 
 Notes: `--dataset all` in `ulpf-generator` hard-requires `kaggle_firewall.csv`
 (absent from the full corpus) — per-family `-D` blasts were used instead.
-`verify` prints the forensic verdict but exits 0 either way (automation caveat,
-see §6).
+`verify` prints the forensic verdict with machine-readable exit codes (0 = valid, 1 = missing input, 2 = tamper).
 
 ### Scale load test — 328,610 offered over live UDP
 
@@ -227,8 +226,7 @@ flush, by design.
 
 ### Honest limitations
 
-1. `ulpf verify` exit code does not encode failure — detection lives in the
-   printed verdict (scripts must grep, not `if verify`).
+1. `ulpf verify` exit codes are machine-readable (0 = valid, 1 = missing input, 2 = tamper) — verified against both fixture blocks.
 2. Onboarder portless formats: no `port` token ⇒ a numeric token (`vlan`) gets
    captured as `src_port`.
 3. `ulpf-generator --dataset all` requires `kaggle_firewall.csv` to exist.

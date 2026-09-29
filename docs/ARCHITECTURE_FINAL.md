@@ -299,7 +299,7 @@ We engineered a **100% Air-Gapped Deterministic Heuristic Synthesizer** ([`crate
 > **Note (2026-09-29):** row (k) was corrected from "100% Covered" to Partial;
 > per-requirement verdicts now live in [`SRS.md`](SRS.md), which this table defers to.
 
-**Conclusion:** All 11 expected requirements (100%) are fully implemented, verified, and demonstrated in production Rust code.
+**Conclusion:** 10 of 11 requirements are fully implemented and verified. Requirement (k) — container image size — is partial: the binary meets the target (22.8 MB < 35 MB); the container image does not. See §3.k and SRS.md.
 
 ---
 
